@@ -6,6 +6,7 @@ from .mcadmin import ServerOverview
 ONLINE_STATUSES = {"RUNNING", "STARTING", "HEALTHY"}
 PLAYER_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 QQ_ID_RE = re.compile(r"^\d{5,12}$")
+BANLIST_HEADER_RE = re.compile(r"^There are (\d+) ban\(s\):$", re.IGNORECASE)
 
 
 class UserInputError(ValueError):
@@ -131,6 +132,11 @@ def translate_action(action: str, player: str, output: str) -> str:
 
 
 def translate_player_list(kind: str, output: str) -> list[str] | None:
+    if kind == "banlist":
+        return _translate_banlist(output)
+    if kind != "whitelist":
+        return None
+
     normalized = output.casefold()
     if "there are no" in normalized or output.strip().endswith(":"):
         return []
@@ -139,6 +145,35 @@ def translate_player_list(kind: str, output: str) -> list[str] | None:
     names = [name.strip() for name in output.split(":", 1)[1].split(",")]
     if not names or any(not PLAYER_NAME_RE.fullmatch(name) for name in names):
         return None
+    return names
+
+
+def _translate_banlist(output: str) -> list[str] | None:
+    stripped = output.strip()
+    if not stripped:
+        return None
+
+    lines = [line.strip() for line in stripped.splitlines()]
+    if len(lines) == 1 and "there are no" in lines[0].casefold():
+        return []
+
+    header = BANLIST_HEADER_RE.fullmatch(lines[0])
+    if header is None or int(header.group(1)) != len(lines) - 1:
+        return None
+
+    names: list[str] = []
+    for entry in lines[1:]:
+        player, separator, details = entry.partition(" was banned by ")
+        source, detail_separator, reason = details.partition(": ")
+        if (
+            not separator
+            or not source
+            or not detail_separator
+            or not reason
+            or not PLAYER_NAME_RE.fullmatch(player)
+        ):
+            return None
+        names.append(player)
     return names
 
 

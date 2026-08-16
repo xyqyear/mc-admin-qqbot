@@ -152,7 +152,13 @@ async def test_command_service_lists_and_admin_commands(
         "There are 2 whitelisted players: Alice, Bob",
         "Added Notch",
         "Banned Notch",
-        "There are no banned players",
+        "\n".join(
+            [
+                "There are 2 ban(s):",
+                "Alice was banned by Server: Griefing, repeatedly",
+                "Bob_2 was banned by Admin: Ignored warning: final",
+            ]
+        ),
     ]
     whitelist = await service.whitelist.execute(context(admin=False), "list /van")
     assert isinstance(whitelist, ListResponse)
@@ -168,7 +174,7 @@ async def test_command_service_lists_and_admin_commands(
     assert "已封禁" in ban_response.text
     banlist_response = await service.banlist.execute("/van")
     assert isinstance(banlist_response, ListResponse)
-    assert banlist_response.items == ()
+    assert banlist_response.items == ("Alice", "Bob_2")
     with pytest.raises(UserInputError, match="用法"):
         await service.ban.execute(context(), "")
 
