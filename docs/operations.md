@@ -72,6 +72,13 @@ Keep `.env.bot` outside images and source control. Tokens are loaded as secret
 settings and are never passed to NoneBot initialization, preventing DEBUG
 configuration dumps from exposing them.
 
+The repository `compose.yaml` uses environment interpolation for all personal
+identifiers, network endpoints, and secrets. Copy `.env.bot.example` to the
+ignored `.env.bot`, set deployment values there, and pass it with
+`docker compose --env-file .env.bot`. Never commit the populated file. The
+`./data:/app/data` bind mount requires the host data directory to be writable
+by UID and GID 1000.
+
 For a local mc-admin behind a host-wide proxy, configure both `NO_PROXY` and
 `no_proxy` with the mc-admin hostname or address. Restrict the OneBot listener
 with a firewall or reverse proxy when it is not bound to a trusted network.

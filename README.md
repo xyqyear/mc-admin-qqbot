@@ -104,14 +104,21 @@ commands, cursor recovery, outbox delivery, and restart-watch behavior.
 
 ## Containers
 
-Build and run the bot-only Compose service:
+Copy the ignored environment example, replace every deployment-specific value,
+then pull and run the published bot image:
 
 ```powershell
-docker compose up --build -d
+Copy-Item .env.bot.example .env.bot
+docker compose --env-file .env.bot pull
+docker compose --env-file .env.bot up -d
 ```
 
-Compose reads `.env.bot` and stores SQLite data in the `bot-data` volume. It
-does not deploy QQ or mc-admin services.
+The committed `compose.yaml` contains only interpolated placeholders and safe
+defaults. Compose declares every runtime setting, defaults to
+`TZ=Asia/Shanghai`, and bind-mounts `./data` at `/app/data`. The checked-out
+migrated `data/bot.db` is therefore used directly. The Compose service does not
+deploy QQ or mc-admin; the configured mc-admin hostname must be reachable from
+the container.
 
 ## Development
 
