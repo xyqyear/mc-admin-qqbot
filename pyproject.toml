@@ -1,6 +1,6 @@
 [project]
 name = "mc-admin-qqbot"
-version = "0.1.0"
+version = "0.1.1"
 description = "A durable QQ bridge for Minecraft servers managed by mc-admin"
 readme = "README.md"
 authors = [
