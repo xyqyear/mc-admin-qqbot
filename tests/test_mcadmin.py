@@ -1,6 +1,6 @@
 import json
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import nonebot
@@ -34,25 +34,124 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[McAdminClient, AsyncMock]:
 
 async def test_overview_and_authorization_header(client) -> None:
     mcadmin, request_mock = client
-    request_mock.return_value = response(
-        200,
-        [
-            {
-                "id": "vanilla",
-                "name": "Vanilla",
-                "gamePort": 25565,
-                "status": "HEALTHY",
-                "online_players": [
-                    {"name": "Notch", "uuid": "uuid", "player_db_id": 7}
-                ],
-            }
-        ],
-    )
+    request_mock.side_effect = [
+        response(
+            200,
+            [
+                {
+                    "id": "vanilla",
+                    "name": "Vanilla",
+                    "gamePort": 25565,
+                }
+            ],
+        ),
+        response(200, monitoring_payload()),
+        response(200, [{"current_name": "Notch", "uuid": "uuid", "player_db_id": 7}]),
+    ]
     servers = await mcadmin.overview()
     assert servers[0].game_port == 25565
-    request: Request = request_mock.await_args.args[0]
-    assert str(request.url) == "http://mc-admin.test/api/servers/overview"
-    assert request.headers["Authorization"] == "Bearer secret"
+    assert servers[0].status == "HEALTHY"
+    assert servers[0].online_players[0].name == "Notch"
+    requests = [call.args[0] for call in request_mock.await_args_list]
+    assert [str(request.url) for request in requests] == [
+        "http://mc-admin.test/api/servers/",
+        "http://mc-admin.test/api/monitoring",
+        "http://mc-admin.test/api/servers/vanilla/online-players",
+    ]
+    assert all(
+        request.headers["Authorization"] == "Bearer secret" for request in requests
+    )
+
+
+def monitoring_payload(*, quality="ready", value="HEALTHY", sampled_at=None) -> dict:
+    return {
+        "servers": {
+            "vanilla": {
+                "status": {
+                    "value": value,
+                    "quality": quality,
+                    "sampled_at": sampled_at or datetime.now(UTC).isoformat(),
+                    "error": None,
+                }
+            }
+        }
+    }
+
+
+@pytest.mark.parametrize("quality", ["pending", "stale", "unavailable"])
+async def test_status_rejects_unusable_samples(client, quality) -> None:
+    mcadmin, request_mock = client
+    request_mock.return_value = response(200, monitoring_payload(quality=quality))
+    with pytest.raises(McAdminUnavailable):
+        await mcadmin.status("vanilla")
+
+
+@pytest.mark.parametrize("offset", [-10, -1, 0])
+async def test_restart_status_requires_sample_after_request(client, offset) -> None:
+    mcadmin, request_mock = client
+    requested_at = datetime.now(UTC)
+    request_mock.return_value = response(
+        200,
+        monitoring_payload(
+            sampled_at=(requested_at + timedelta(seconds=offset)).isoformat()
+        ),
+    )
+    with pytest.raises(McAdminUnavailable):
+        await mcadmin.status("vanilla", after=requested_at)
+
+
+async def test_status_accepts_fresh_post_request_sample(client) -> None:
+    mcadmin, request_mock = client
+    requested_at = datetime.now(UTC) - timedelta(seconds=1)
+    request_mock.return_value = response(200, monitoring_payload())
+    assert await mcadmin.status("vanilla", after=requested_at) == "HEALTHY"
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        {"value": None, "quality": "ready", "sampled_at": None},
+        {"value": "HEALTHY", "quality": "ready", "sampled_at": "2026-01-01T00:00:00"},
+        {"value": "HEALTHY", "quality": "ready", "sampled_at": "2026-01-01T00:00:00Z"},
+    ],
+)
+async def test_status_rejects_missing_or_expired_timestamp(client, sample) -> None:
+    mcadmin, request_mock = client
+    request_mock.return_value = response(
+        200, {"servers": {"vanilla": {"status": sample}}}
+    )
+    with pytest.raises(McAdminUnavailable):
+        await mcadmin.status("vanilla")
+
+
+async def test_missing_server_observation_is_unavailable(client) -> None:
+    mcadmin, request_mock = client
+    request_mock.return_value = response(200, {"servers": {}})
+    with pytest.raises(McAdminUnavailable):
+        await mcadmin.status("vanilla")
+
+
+@pytest.mark.parametrize("status", ["EXISTS", "CREATED", "REMOVED"])
+async def test_overview_does_not_fetch_players_for_stopped_servers(client, status):
+    mcadmin, request_mock = client
+    request_mock.side_effect = [
+        response(200, [{"id": "vanilla", "name": "Vanilla", "gamePort": 25565}]),
+        response(200, monitoring_payload(value=status)),
+    ]
+    servers = await mcadmin.overview()
+    assert servers[0].status == status
+    assert servers[0].online_players == []
+    assert request_mock.await_count == 2
+
+
+async def test_overview_does_not_report_unknown_status_as_offline(client):
+    mcadmin, request_mock = client
+    request_mock.side_effect = [
+        response(200, [{"id": "vanilla", "name": "Vanilla", "gamePort": 25565}]),
+        response(200, monitoring_payload(quality="stale")),
+    ]
+    with pytest.raises(McAdminUnavailable):
+        await mcadmin.overview()
 
 
 async def test_all_http_operations(client) -> None:
@@ -62,7 +161,7 @@ async def test_all_http_operations(client) -> None:
         response(200, {"output": "ok"}),
         response(204),
         response(200, {"message": "issued"}),
-        response(200, {"status": "HEALTHY"}),
+        response(200, monitoring_payload()),
     ]
     assert (await mcadmin.player("abc")).current_name == "Alice"
     assert await mcadmin.rcon("vanilla", "list") == "ok"

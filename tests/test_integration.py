@@ -67,17 +67,13 @@ async def fake_mcadmin() -> AsyncIterator[tuple[str, dict[str, Any]]]:
         if authorization != "Bearer mc-admin-test-token":
             raise HTTPException(status_code=401, detail="unauthorized")
 
-    @app.get("/api/servers/overview", dependencies=[Depends(authorize)])
+    @app.get("/api/servers/", dependencies=[Depends(authorize)])
     async def overview() -> list[dict[str, Any]]:
         return [
             {
                 "id": "vanilla",
                 "name": "Vanilla",
                 "gamePort": 25565,
-                "status": "HEALTHY",
-                "online_players": [
-                    {"name": "Alice", "uuid": "uuid-a", "player_db_id": 1}
-                ],
             }
         ]
 
@@ -108,9 +104,26 @@ async def fake_mcadmin() -> AsyncIterator[tuple[str, dict[str, Any]]]:
         state["operations"].append((server_id, payload))
         return {"message": "issued"}
 
-    @app.get("/api/servers/{server_id}/status", dependencies=[Depends(authorize)])
-    async def status(server_id: str) -> dict[str, str]:
-        return {"status": "HEALTHY"}
+    @app.get("/api/monitoring", dependencies=[Depends(authorize)])
+    async def monitoring() -> dict:
+        return {
+            "servers": {
+                "vanilla": {
+                    "status": {
+                        "value": "HEALTHY",
+                        "quality": "ready",
+                        "sampled_at": datetime.now(UTC).isoformat(),
+                        "error": None,
+                    }
+                }
+            }
+        }
+
+    @app.get(
+        "/api/servers/{server_id}/online-players", dependencies=[Depends(authorize)]
+    )
+    async def online_players(server_id: str) -> list[dict]:
+        return [{"current_name": "Alice", "uuid": "uuid-a", "player_db_id": 1}]
 
     @app.websocket("/api/events")
     async def events(websocket: WebSocket, since: str | None = None) -> None:
@@ -227,6 +240,9 @@ async def test_application_event_delivery_and_nonebug_command(
     await driver._lifespan.startup()
     try:
         assert (await application.client.overview())[0].id == "vanilla"
+        assert await application.client.status("vanilla") == "HEALTHY"
+        listing = await application.commands.list_servers.execute()
+        assert listing.text == "[vanilla]：Alice"
         event_stream = application.client.events(None)
         streamed_event = await asyncio.wait_for(anext(event_stream), timeout=5)
         await event_stream.aclose()

@@ -1,6 +1,6 @@
 import json
 from collections.abc import AsyncGenerator, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar
 from urllib.parse import quote, urlencode
 
@@ -36,12 +36,15 @@ class OnlinePlayer(BaseModel):
     player_db_id: int
 
 
-class ServerOverview(BaseModel):
+class ServerMetadata(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str
     name: str
     game_port: int = Field(alias="gamePort")
+
+
+class ServerOverview(ServerMetadata):
     status: str
     online_players: list[OnlinePlayer]
 
@@ -54,8 +57,38 @@ class PlayerDetail(BaseModel):
     current_name: str
 
 
-class ServerStatus(BaseModel):
-    status: str
+class StatusSample(BaseModel):
+    value: (
+        Literal["REMOVED", "EXISTS", "CREATED", "RUNNING", "STARTING", "HEALTHY"] | None
+    )
+    quality: Literal["ready", "pending", "stale", "unavailable"]
+    sampled_at: datetime | None
+
+    def current(self, *, after: datetime | None = None) -> str:
+        if (
+            self.quality != "ready"
+            or self.value is None
+            or self.sampled_at is None
+            or self.sampled_at.tzinfo is None
+            or (datetime.now(UTC) - self.sampled_at).total_seconds() > 6
+            or (after is not None and self.sampled_at <= after)
+        ):
+            raise McAdminUnavailable("mc-admin status observation is not current")
+        return self.value
+
+
+class ServerObservation(BaseModel):
+    status: StatusSample
+
+
+class Monitoring(BaseModel):
+    servers: dict[str, ServerObservation]
+
+    def status(self, server_id: str, *, after: datetime | None = None) -> str:
+        observation = self.servers.get(server_id)
+        if observation is None:
+            raise McAdminUnavailable("mc-admin server observation is missing")
+        return observation.status.current(after=after)
 
 
 class RconResult(BaseModel):
@@ -102,7 +135,8 @@ class UnknownFrame(BaseModel):
 
 
 EventFrame = ChatEvent | HeartbeatFrame | StreamResetFrame | UnknownFrame
-overview_adapter = TypeAdapter(list[ServerOverview])
+metadata_adapter = TypeAdapter(list[ServerMetadata])
+players_adapter = TypeAdapter(list[PlayerDetail])
 ResponseModel = TypeVar("ResponseModel")
 
 
@@ -196,8 +230,41 @@ class McAdminClient:
             ) from exc
 
     async def overview(self) -> list[ServerOverview]:
-        data = await self._request("GET", "/servers/overview")
-        return self._validate_response(data, overview_adapter.validate_python)
+        data = await self._request("GET", "/servers/")
+        metadata = self._validate_response(data, metadata_adapter.validate_python)
+        monitoring = await self.monitoring()
+        servers = []
+        for server in metadata:
+            status = monitoring.status(server.id)
+            players = []
+            if status in {"RUNNING", "STARTING", "HEALTHY"}:
+                data = await self._request(
+                    "GET", f"/servers/{quote(server.id, safe='')}/online-players"
+                )
+                players = [
+                    OnlinePlayer(
+                        name=player.current_name,
+                        uuid=player.uuid,
+                        player_db_id=player.player_db_id,
+                    )
+                    for player in self._validate_response(
+                        data, players_adapter.validate_python
+                    )
+                ]
+            servers.append(
+                ServerOverview(
+                    id=server.id,
+                    name=server.name,
+                    gamePort=server.game_port,
+                    status=status,
+                    online_players=players,
+                )
+            )
+        return servers
+
+    async def monitoring(self) -> Monitoring:
+        data = await self._request("GET", "/monitoring")
+        return self._validate_response(data, Monitoring.model_validate)
 
     async def player(self, uuid: str) -> PlayerDetail:
         data = await self._request("GET", f"/players/uuid/{quote(uuid, safe='')}")
@@ -236,11 +303,8 @@ class McAdminClient:
             {"action": "restart"},
         )
 
-    async def status(self, server_id: str) -> str:
-        data = await self._request(
-            "GET", f"/servers/{quote(server_id, safe='')}/status"
-        )
-        return self._validate_response(data, ServerStatus.model_validate).status
+    async def status(self, server_id: str, *, after: datetime | None = None) -> str:
+        return (await self.monitoring()).status(server_id, after=after)
 
     @staticmethod
     def parse_frame(raw: str | bytes) -> EventFrame:

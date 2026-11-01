@@ -23,7 +23,7 @@ configuration, tests, and documentation are English.
 
 - Python 3.13
 - uv 0.12 or newer
-- mc-admin with the bot integration API described in
+- mc-admin 7.1 with the bot integration API described in
   [docs/mc-admin-api.md](docs/mc-admin-api.md)
 - A OneBot V11 implementation such as NapCat or Lagrange
 

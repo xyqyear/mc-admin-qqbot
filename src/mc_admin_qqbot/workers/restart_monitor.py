@@ -40,9 +40,17 @@ class RestartMonitor:
             await self._finish(watch, f"[{watch.server_id}] 重启等待超时")
             return
         try:
-            healthy = await self.client.status(watch.server_id) == "HEALTHY"
+            healthy = (
+                await self.client.status(watch.server_id, after=watch.created_at)
+                == "HEALTHY"
+            )
         except McAdminError:
-            healthy = False
+            await self.repository.update_restart_watch(
+                watch.server_id,
+                observed_unhealthy=watch.observed_unhealthy,
+                healthy_streak=0,
+            )
+            return
         observed_unhealthy = watch.observed_unhealthy or not healthy
         healthy_streak = watch.healthy_streak + 1 if healthy else 0
         stable_without_transition = (

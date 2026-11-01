@@ -143,9 +143,7 @@ async def test_say_validation_and_explicit_reply_route(
 async def test_command_service_lists_and_admin_commands(
     database: Database, settings: Settings, client: AsyncMock
 ) -> None:
-    service = build_command_services(
-        settings, client, Repository(database.sessions)
-    )
+    service = build_command_services(settings, client, Repository(database.sessions))
     list_response = await service.list_servers.execute()
     assert "[vanilla]" in list_response.text
     client.rcon.side_effect = [
@@ -165,9 +163,7 @@ async def test_command_service_lists_and_admin_commands(
     assert whitelist.items == ("Alice", "Bob")
     with pytest.raises(PermissionError):
         await service.whitelist.execute(context(admin=False), "add Notch /van")
-    whitelist_response = await service.whitelist.execute(
-        context(), "add Notch /van"
-    )
+    whitelist_response = await service.whitelist.execute(context(), "add Notch /van")
     assert isinstance(whitelist_response, TextResponse)
     assert "加入白名单" in whitelist_response.text
     ban_response = await service.ban.execute(context(), "Notch /van")
@@ -182,9 +178,7 @@ async def test_command_service_lists_and_admin_commands(
 async def test_admin_command_validation_and_unparsed_results(
     database: Database, settings: Settings, client: AsyncMock
 ) -> None:
-    service = build_command_services(
-        settings, client, Repository(database.sessions)
-    )
+    service = build_command_services(settings, client, Repository(database.sessions))
     with pytest.raises(UserInputError, match="用法"):
         await service.whitelist.execute(context(), "unknown")
     with pytest.raises(UserInputError, match="用法"):
@@ -220,9 +214,7 @@ async def test_admin_command_validation_and_unparsed_results(
 async def test_admin_services_reject_members_before_external_calls(
     database: Database, settings: Settings, client: AsyncMock
 ) -> None:
-    service = build_command_services(
-        settings, client, Repository(database.sessions)
-    )
+    service = build_command_services(settings, client, Repository(database.sessions))
     member = context(admin=False)
     with pytest.raises(PermissionError):
         await service.ban.execute(member, "Notch /van")
@@ -483,6 +475,7 @@ async def test_restart_command_and_monitor_complete(
     client.status.return_value = "STARTING"
     watch = (await repository.restart_watches())[0]
     await monitor._check(watch)
+    client.status.assert_awaited_with("vanilla", after=watch.created_at)
     client.status.return_value = "HEALTHY"
     watch = (await repository.restart_watches())[0]
     await monitor._check(watch)
@@ -532,7 +525,7 @@ async def test_restart_monitor_stable_window_and_private_notification(
     assert delivery.body.endswith("重启完成")
 
 
-async def test_restart_monitor_treats_mcadmin_error_as_unhealthy(
+async def test_restart_monitor_does_not_treat_unknown_as_transition(
     database: Database, settings: Settings, client: AsyncMock
 ) -> None:
     repository = Repository(database.sessions)
@@ -550,8 +543,13 @@ async def test_restart_monitor_treats_mcadmin_error_as_unhealthy(
     client.status.side_effect = McAdminUnavailable("offline")
     await RestartMonitor(settings, client, repository)._check(watch)
     current = (await repository.restart_watches())[0]
-    assert current.observed_unhealthy
+    assert not current.observed_unhealthy
     assert current.healthy_streak == 0
+    client.status.side_effect = None
+    client.status.return_value = "HEALTHY"
+    await RestartMonitor(settings, client, repository)._check(current)
+    assert len(await repository.restart_watches()) == 1
+    assert await repository.pending_deliveries() == []
 
 
 async def test_restart_monitor_run_checks_persisted_watches(

@@ -63,7 +63,9 @@ restart and announces either completion or timeout through the outbox.
 
 A server is considered recovered after an unhealthy state followed by
 `HEALTHY`, or after a minimum stability window with three consecutive healthy
-checks. This prevents the pre-restart healthy state from being reported as a
+checks. Only fresh, ready monitoring samples newer than the watch are eligible.
+Unknown observations reset the healthy streak without counting as an unhealthy
+transition. This prevents the pre-restart healthy state from being reported as a
 completed restart.
 
 ## Secrets and Networking
