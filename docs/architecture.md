@@ -1,64 +1,45 @@
 # Architecture
 
-The application separates inbound adapters, business services, durable event
-processing, and long-running workers. Business command services do not import
-NoneBot or OneBot types.
+One aiohttp session, an async SQLite engine and four asyncio tasks: QQ receive,
+mc-admin event receive, delivery and restart monitoring.
 
-## QQ Commands
+| Module | Responsibility |
+| --- | --- |
+| qq.py | Tokens, HTTP messages, gateway heartbeat/resume, parsed QQ messages |
+| mcadmin.py | mc-admin HTTP/WebSocket wire models and client |
+| application.py | Startup, profile refresh, private enrollment, dispatch, lifecycle |
+| commands.py, domain.py | QQ commands, permissions, targeting, compact output |
+| binding.py, relay.py | Game initiation, confirmation, atomic game-event handling |
+| models.py, database.py | Profiles, outbox, routes, cursor, restart watches |
+| workers.py | Delivery retry, reconnect and restart completion |
+| config.py, __main__.py | Settings and process resources |
 
-Each QQ command has two matching modules:
+A new command needs a branch in Commands.handle, nearby behavior and a test.
+There is no registration framework, plugin container or protocol SDK.
 
-- `plugin/commands/<command>.py` declares the NoneBot matcher, converts the
-  OneBot event into a `CommandContext`, and renders the response.
-- `services/commands/<command>.py` validates authorization and input, calls
-  mc-admin or repositories, and returns a typed response.
+## Users
 
-`services/commands/container.py` constructs the typed command collection used
-by `Application`. Shared server selection belongs in
-`services/commands/targeting.py`. QQ context rules, response rendering, and
-error handling belong in the shared `plugin` modules rather than individual
-commands.
+users owns the integer ID, optional manual QQ number, unique player UUID and
+persisted superuser flag. qq_identity maps AppID + OpenID to the user and stores
+the author profile. group_member stores per-group card and role. Commands check
+the current message role rather than authorizing from cached profiles.
 
-To add a QQ command:
+## Transactions
 
-1. Add its framework-independent service and direct unit tests.
-2. Add its matcher module and NoneBug tests.
-3. Add the service to `CommandServices` and its builder.
-4. Import the matcher from `plugin/__init__.py` so plugin loading registers it.
-5. Add user-facing help text when the command is public.
+Game-event processing commits binding changes, deliveries and checkpoint in one
+transaction. Ignore replayed cursors. After delivery, commit the remote ID and
+server reference route together.
 
-Authorization must be enforced by the service. Adapter-level checks may avoid
-unnecessary work, but they are not a security boundary.
+Code confirmation atomically deletes an unexpired request and sets the UUID.
+Conflicts roll back consumption. Unique UUID constraints preserve one-to-one
+binding. Serialize claims of the single startup token.
 
-## Game Commands
+Deduplicate QQ events in memory and reply insertions by persisted keys. Synchronous
+external QQ command mutations are not exactly once across process crashes.
 
-Game commands arrive as mc-admin `ChatEvent` frames rather than NoneBot events.
-The `game_commands` package is their inbound adapter:
+## Protocol evidence
 
-- `game_commands/router.py` recognizes registered command names.
-- `game_commands/commands/<command>.py` adapts a game event to its business
-  service.
-- `services/game_commands/<command>.py` implements the command behavior.
-
-The current `bind` command follows this structure. A prefixed message whose
-first word is not registered remains ordinary player-to-QQ relay text.
-
-To add a game command:
-
-1. Add its service and transaction-focused unit tests.
-2. Add its game-command adapter.
-3. Register the adapter in `game_commands/container.py`.
-4. Add router and event-processor tests for recognized and fallback input.
-
-Game-command mutations execute with the transaction owned by `EventProcessor`.
-The mutation, response outbox record, and event checkpoint must commit or roll
-back together.
-
-## Events and Workers
-
-`services/events` owns deterministic event processing and outbox creation.
-`workers` owns long-running loops, retries, stream reconnection, delivery, and
-restart monitoring. `Application` is the composition root and lifecycle owner.
-
-The NoneBot plugin import path remains `mc_admin_qqbot.plugin`; the package
-entry point imports each matcher module explicitly.
+[QQ protocol](qq-protocol.md) records actual test-bot observations. Tests reproduce
+those structures with substituted IDs and tokens. The end-to-end test runs both
+protocol servers, real clients, workers and SQLite. Credentials and raw captures
+belong only in ignored local files.

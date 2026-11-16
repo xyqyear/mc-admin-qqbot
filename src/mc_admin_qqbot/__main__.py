@@ -1,37 +1,45 @@
-from pathlib import Path
-from typing import Any, cast
+import asyncio
+import logging
 
-import nonebot
-from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
+import aiohttp
 
 from .application import Application
-from .config import get_settings
-from .runtime import set_application
+from .config import Settings
+from .database import Database
+from .mcadmin import McAdminClient
+from .qq import QQClient
+
+
+async def run(settings: Settings) -> None:
+    database = Database(settings.database_url, settings.qq_app_id)
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=20),
+            trust_env=True,
+        ) as http:
+            qq = QQClient(
+                http, settings.qq_app_id, settings.qq_app_secret.get_secret_value()
+            )
+            mc = McAdminClient(
+                http,
+                settings.mc_admin_api_url,
+                settings.mc_admin_master_token.get_secret_value(),
+            )
+            await Application(settings, database, qq, mc).run()
+    finally:
+        await database.close()
 
 
 def main() -> None:
-    settings = get_settings()
-    nonebot.init(
-        _env_file=Path(".env.nonebot"),
-        driver="~fastapi+~httpx+~websockets",
-        host=settings.host,
-        port=settings.port,
-        log_level=settings.log_level,
-        superusers={str(user_id) for user_id in settings.superusers},
-        command_start={"/"},
+    settings = Settings.model_validate({})
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    driver = nonebot.get_driver()
-    cast(
-        Any, driver.config
-    ).onebot_access_token = settings.onebot_access_token.get_secret_value()
-    driver.register_adapter(OneBotV11Adapter)
-    application = Application(settings, driver)
-    set_application(application)
-    driver.on_bot_connect(application.validate_bot_connection)
-    driver.on_startup(application.startup)
-    driver.on_shutdown(application.shutdown)
-    nonebot.load_from_toml("pyproject.toml")
-    nonebot.run()
+    try:
+        asyncio.run(run(settings))
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

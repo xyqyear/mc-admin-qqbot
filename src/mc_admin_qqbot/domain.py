@@ -5,7 +5,6 @@ from .mcadmin import ServerOverview
 
 ONLINE_STATUSES = {"RUNNING", "STARTING", "HEALTHY"}
 PLAYER_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
-QQ_ID_RE = re.compile(r"^\d{5,12}$")
 BANLIST_HEADER_RE = re.compile(r"^There are (\d+) ban\(s\):$", re.IGNORECASE)
 
 
@@ -180,9 +179,9 @@ def _translate_banlist(output: str) -> list[str] | None:
 HELP_TEXT = """可用命令：
 /list（/ping、/l）查看服务器和玩家
 /say <消息> [/<服务器>]（/s）发送游戏消息，需要绑定
-/whitelist list [/<服务器>] 查看白名单
+/whitelist list [页码] [/<服务器>] 查看白名单
 /whitelist add/remove <玩家> [/<服务器>] 管理白名单（管理员）
 /ban、/unban <玩家> [/<服务器>] 管理封禁（管理员）
-/banlist [/<服务器>] 查看封禁列表
+/banlist [页码] [/<服务器>] 查看封禁列表
 /restart /<服务器> 重启服务器（管理员）
 服务器可使用完整 ID 或前缀指定。"""

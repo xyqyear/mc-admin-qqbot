@@ -1,20 +1,12 @@
 from datetime import UTC, datetime
-from enum import StrEnum
+from typing import Any, Literal
 
-from sqlalchemy import (
-    Boolean,
-    DateTime,
-    Enum,
-    Index,
-    Integer,
-    MetaData,
-    String,
-    Text,
-    UniqueConstraint,
-)
-from sqlalchemy.ext.asyncio import AsyncAttrs
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
+
+type Scope = Literal["group", "private"]
+type Channel = Literal["group", "private", "game"]
 
 
 def utc_now() -> datetime:
@@ -26,133 +18,104 @@ class UTCDateTime(TypeDecorator[datetime]):
     cache_ok = True
 
     def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
-        if value is not None and value.tzinfo is None:
-            raise ValueError("Naive datetime is not allowed")
         return value.astimezone(UTC) if value is not None else None
 
     def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
-        if value is not None and value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
-        return value
+        return value.replace(tzinfo=UTC) if value is not None else None
 
 
-NAMING_CONVENTION = {
-    "ix": "ix_%(column_0_label)s",
-    "uq": "uq_%(table_name)s_%(column_0_name)s",
-    "ck": "ck_%(table_name)s_%(constraint_name)s",
-    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-    "pk": "pk_%(table_name)s",
-}
+class Base(DeclarativeBase):
+    pass
 
 
-class Base(AsyncAttrs, DeclarativeBase):
-    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+class User(Base):
+    __tablename__ = "users"
 
-
-class ContextType(StrEnum):
-    GROUP = "group"
-    PRIVATE = "private"
-
-
-class DeliveryChannel(StrEnum):
-    QQ_GROUP = "qq_group"
-    QQ_PRIVATE = "qq_private"
-    MC_PRIVATE = "mc_private"
-
-
-class DeliveryStatus(StrEnum):
-    PENDING = "pending"
-    SENT = "sent"
-
-
-enum_options = {"native_enum": False, "create_constraint": True}
-
-
-class PlayerBinding(Base):
-    __tablename__ = "player_binding"
-
-    qq_id: Mapped[str] = mapped_column(String(12), primary_key=True)
-    player_uuid: Mapped[str] = mapped_column(String(36), unique=True, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    qq_id: Mapped[str | None] = mapped_column(String(12))
+    player_uuid: Mapped[str | None] = mapped_column(String(36), unique=True)
+    is_superuser: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class QQIdentity(Base):
+    __tablename__ = "qq_identity"
+
+    app_id: Mapped[str] = mapped_column(String, primary_key=True)
+    openid: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    username: Mapped[str | None] = mapped_column(String)
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    profile: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    first_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class GroupMember(Base):
+    __tablename__ = "group_member"
+
+    app_id: Mapped[str] = mapped_column(String, primary_key=True)
+    group_openid: Mapped[str] = mapped_column(String, primary_key=True)
+    member_openid: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    member_nickname: Mapped[str | None] = mapped_column(String)
+    member_role: Mapped[str | None] = mapped_column(String)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+
+
+class BindRequest(Base):
+    __tablename__ = "bind_request"
+
+    code: Mapped[str] = mapped_column(String(4), primary_key=True)
+    player_uuid: Mapped[str] = mapped_column(String(36), unique=True)
+    player_name: Mapped[str] = mapped_column(String(16))
+    server_id: Mapped[str] = mapped_column(String)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
 
 
 class MessageRoute(Base):
     __tablename__ = "message_route"
-    __table_args__ = (
-        UniqueConstraint(
-            "bot_self_id",
-            "context_type",
-            "context_id",
-            "message_id",
-            name="uq_message_route_scope_message",
-        ),
-    )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    bot_self_id: Mapped[str] = mapped_column(String(12), nullable=False)
-    context_type: Mapped[ContextType] = mapped_column(
-        Enum(ContextType, name="context_type", **enum_options), nullable=False
-    )
-    context_id: Mapped[str] = mapped_column(String(12), nullable=False)
-    message_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    server_id: Mapped[str] = mapped_column(String(100), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    app_id: Mapped[str] = mapped_column(String, primary_key=True)
+    scope: Mapped[Scope] = mapped_column(String, primary_key=True)
+    destination: Mapped[str] = mapped_column(String, primary_key=True)
+    ref_idx: Mapped[str] = mapped_column(String, primary_key=True)
+    server_id: Mapped[str] = mapped_column(String)
 
 
 class EventCheckpoint(Base):
     __tablename__ = "event_checkpoint"
 
-    stream_name: Mapped[str] = mapped_column(String(64), primary_key=True)
-    cursor: Mapped[str] = mapped_column(String(255), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
+    stream_name: Mapped[str] = mapped_column(String, primary_key=True)
+    cursor: Mapped[str] = mapped_column(String)
 
 
 class OutboundDelivery(Base):
     __tablename__ = "outbound_delivery"
-    __table_args__ = (
-        Index("ix_outbound_delivery_ready", "status", "available_at", "id"),
-    )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    dedupe_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    channel: Mapped[DeliveryChannel] = mapped_column(
-        Enum(DeliveryChannel, name="delivery_channel", **enum_options), nullable=False
-    )
-    bot_self_id: Mapped[str | None] = mapped_column(String(12))
-    destination_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    target_player: Mapped[str | None] = mapped_column(String(16))
-    server_id: Mapped[str | None] = mapped_column(String(100))
-    body: Mapped[str] = mapped_column(Text, nullable=False)
-    route_server_id: Mapped[str | None] = mapped_column(String(100))
-    status: Mapped[DeliveryStatus] = mapped_column(
-        Enum(DeliveryStatus, name="delivery_status", **enum_options),
-        default=DeliveryStatus.PENDING,
-        nullable=False,
-    )
-    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dedupe_key: Mapped[str] = mapped_column(String, unique=True)
+    channel: Mapped[Channel] = mapped_column(String)
+    destination: Mapped[str] = mapped_column(String)
+    body: Mapped[str] = mapped_column(Text)
+    server_id: Mapped[str | None] = mapped_column(String)
+    reply_msg_id: Mapped[str | None] = mapped_column(Text)
+    reply_seq: Mapped[int] = mapped_column(default=1)
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(default=0)
     available_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
+    remote_message_id: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
-    remote_message_id: Mapped[str | None] = mapped_column(String(32))
-    last_error: Mapped[str | None] = mapped_column(Text)
 
 
 class RestartWatch(Base):
     __tablename__ = "restart_watch"
 
-    server_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    requested_by_qq: Mapped[str] = mapped_column(String(12), nullable=False)
-    bot_self_id: Mapped[str] = mapped_column(String(12), nullable=False)
-    context_type: Mapped[ContextType] = mapped_column(
-        Enum(ContextType, name="restart_context_type", **enum_options), nullable=False
-    )
-    context_id: Mapped[str] = mapped_column(String(12), nullable=False)
-    deadline: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
-    observed_unhealthy: Mapped[bool] = mapped_column(Boolean, default=False)
-    healthy_streak: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=utc_now, onupdate=utc_now
-    )
+    server_id: Mapped[str] = mapped_column(String, primary_key=True)
+    task_id: Mapped[str | None] = mapped_column(String)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    scope: Mapped[Scope] = mapped_column(String)
+    destination: Mapped[str] = mapped_column(String)
+    reply_msg_id: Mapped[str] = mapped_column(Text)
+    deadline: Mapped[datetime] = mapped_column(UTCDateTime())

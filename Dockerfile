@@ -12,8 +12,6 @@ RUN python -m pip install --no-cache-dir uv==0.12.0
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY alembic.ini ./
-COPY alembic ./alembic
 COPY src ./src
 RUN uv sync --frozen --no-dev
 
@@ -26,7 +24,5 @@ RUN groupadd --gid 1000 bot \
 USER bot
 
 ENV PATH="/app/.venv/bin:$PATH"
-
-EXPOSE 8080
 
 CMD ["mc-admin-qqbot"]

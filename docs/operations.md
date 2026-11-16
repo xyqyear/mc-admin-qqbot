@@ -1,86 +1,66 @@
 # Operations
 
-## Startup Sequence
+## Deployment
 
-The process validates configuration before initializing NoneBot. During the
-NoneBot startup hook it creates the SQLite parent directory, verifies that the
-Alembic graph has one head, upgrades to that head, and then starts the event
-consumer, delivery worker, and restart monitor.
+Fill .env.bot from the example. The QQ bot needs all-message reception and
+proactive-message permission in the target group. Use group_openid, not a numeric
+QQ group number. Only outbound HTTP/WebSocket connections are used.
 
-mc-admin and QQ connectivity are not startup gates. Failed external delivery
-remains pending and is retried with backoff.
+Startup creates missing tables and prints a random superuser claim token.
+Claim it privately once. Console access can grant persistent administration.
+Restarting issues another token without clearing existing administrators.
 
-## Migrations
+Docker stores data under ./data, writable by UID/GID 1000. Deploy the checkout
+with docker compose --env-file .env.bot up -d --build. Set NO_PROXY for a private
+mc-admin host if a proxy is configured.
 
-Back up the SQLite database before deploying a release with a new revision.
-SQLite online backups or a copy made while the bot is stopped are suitable.
+## Database
 
-Inspect and apply migrations manually with:
+The default is data/official-bot.db. Use a separate fresh file. Startup does not
+alter old schemas or run migrations. Transfer previous data manually later.
 
-```powershell
-uv run alembic heads
-uv run alembic current
-uv run alembic upgrade head
-```
+Stop the process before copying SQLite files, or use SQLite's online backup API.
+WAL and SHM files can contain committed data. Back up before manual maintenance.
 
-The database directory must already exist for standalone Alembic commands.
-Application startup creates it automatically.
+users.qq_id is optional manual data; it never participates in identity matching.
+OpenID is scoped by AppID. Replacement bot accounts must not inherit identities
+from coincidentally matching OpenIDs. Names/cards can assist manual investigation
+but do not prove ownership.
 
-Do not edit a deployed revision. Add a revision whose ID matches
-`YYYYMMDD_short_change`, contains only lowercase letters, digits, and
-underscores after the date, and is no longer than 32 characters. Keep one
-Alembic head.
+## Cursor and delivery
 
-## Event Cursor Recovery
+Game-event changes, responses and cursor commit together. Reconnect from the
+saved cursor. cursor_too_old reconnects while retaining it; invalid_cursor stops
+the consumer with a critical log. Investigate replay retention and back up before
+manually changing event_checkpoint. Never clear it automatically.
 
-The consumer reconnects with the last transactionally committed cursor. A
-chat event, its binding change or outbox record, and the checkpoint update are
-committed together.
+Transient HTTP/transport delivery failures retry with capped backoff. Permanent
+failures remain marked failed. Logs contain safe status/code, not raw responses.
+QQ and SQLite cannot commit atomically: a crash after acceptance can duplicate a
+message. Event replay cannot create duplicate outbox rows.
 
-- `cursor_too_old`: retain the checkpoint and reconnect. mc-admin remains the
-  authority for replay availability.
-- `invalid_cursor`: stop consumption and emit a critical log. Do not clear the
-  checkpoint automatically, because that can silently skip history.
+QQ tokens refresh before expiry. A 401 refreshes and retries once. Gateway
+reconnect resumes its session/sequence, or identifies again after invalidation.
+Missed heartbeat acknowledgments reconnect.
 
-Resolve an invalid cursor by investigating mc-admin retention and the stored
-`event_checkpoint` value. Take a database backup before changing the cursor.
+## Restarts
 
-## Outbox Delivery
+Persist a watch before submission. A known HTTP rejection removes it. Transport
+failure may mean the acceptance response was lost: retain the watch, report
+uncertainty and do not resubmit. Unknown submissions eventually time out.
 
-QQ and private Minecraft deliveries remain pending until successful. Each
-event-derived delivery has a stable deduplication key, so replaying a committed
-cursor does not create another row.
+Poll accepted tasks. Pending/running is not complete. Failed/cancelled tasks
+notify failure. Completed tasks need a ready healthy sample newer than ended_at
+and at most six seconds old. Missing task records and deadline expiry produce
+notices. Group completion notices are proactive; private notices reply to the
+original request. Persist watches and notifications across process restarts.
 
-Delivery is at least once. A process crash after QQ accepts a message but
-before SQLite records success can produce a duplicate after restart. This
-small window is intentional; avoiding lost relays takes priority.
+## Credentials and diagnosis
 
-## Restart Watches
+Keep .env.bot, databases and captures outside Git and image contexts. Never log
+raw QQ frames: message_scene.ext contains an auth token. Only author profiles
+are persisted; scene credentials are discarded.
 
-Restart requests create a persistent watch before calling mc-admin. If the API
-request fails, the watch is removed. Otherwise the monitor resumes after bot
-restart and announces either completion or timeout through the outbox.
-
-A server is considered recovered after an unhealthy state followed by
-`HEALTHY`, or after a minimum stability window with three consecutive healthy
-checks. Only fresh, ready monitoring samples newer than the watch are eligible.
-Unknown observations reset the healthy streak without counting as an unhealthy
-transition. This prevents the pre-restart healthy state from being reported as a
-completed restart.
-
-## Secrets and Networking
-
-Keep `.env.bot` outside images and source control. Tokens are loaded as secret
-settings and are never passed to NoneBot initialization, preventing DEBUG
-configuration dumps from exposing them.
-
-The repository `compose.yaml` uses environment interpolation for all personal
-identifiers, network endpoints, and secrets. Copy `.env.bot.example` to the
-ignored `.env.bot`, set deployment values there, and pass it with
-`docker compose --env-file .env.bot`. Never commit the populated file. The
-`./data:/app/data` bind mount requires the host data directory to be writable
-by UID and GID 1000.
-
-For a local mc-admin behind a host-wide proxy, configure both `NO_PROXY` and
-`no_proxy` with the mc-admin hostname or address. Restrict the OneBot listener
-with a firewall or reverse proxy when it is not bound to a trusted network.
+Action logs identify internal users and operations. Outbox rows retain safe
+failure descriptions. Do not paste complete environment files or raw frames
+into issue reports.

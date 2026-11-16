@@ -1,7 +1,7 @@
 [project]
 name = "mc-admin-qqbot"
-version = "0.1.1"
-description = "A durable QQ bridge for Minecraft servers managed by mc-admin"
+version = "0.2.0"
+description = "An official QQ bot for Minecraft servers managed by mc-admin"
 readme = "README.md"
 authors = [
     { name = "xyqyear", email = "xyqyear@gmail.com" }
@@ -9,9 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "aiosqlite~=0.22.1",
-    "alembic~=1.18.5",
-    "nonebot-adapter-onebot~=2.4.6",
-    "nonebot2[fastapi,httpx,websockets]~=2.5.0",
+    "aiohttp>=3.14.5,<4",
     "pydantic-settings>=2.13.0,<3",
     "sqlalchemy[asyncio]~=2.0.51",
 ]
@@ -25,7 +23,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "nonebug~=0.4.4",
     "pyright>=1.1.409",
     "pytest~=9.1.1",
     "pytest-asyncio~=1.4.0",
@@ -33,15 +30,9 @@ dev = [
     "ruff>=0.15.0,<0.16",
 ]
 
-[tool.nonebot]
-plugin_dirs = []
-
-[tool.nonebot.plugins]
-"@local" = ["mc_admin_qqbot.plugin"]
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "--strict-markers --cov=mc_admin_qqbot --cov-branch --cov-report=term-missing --cov-fail-under=95"
 
@@ -56,7 +47,7 @@ exclude_also = [
 ]
 
 [tool.pyright]
-include = ["src", "tests", "alembic"]
+include = ["src", "tests"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
 

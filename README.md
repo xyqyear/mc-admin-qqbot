@@ -1,140 +1,108 @@
 # mc-admin QQ Bot
 
-A durable NoneBot2 bridge between one QQ group and Minecraft servers managed by
-mc-admin. The bot never accesses Docker, Minecraft files, logs, or RCON ports
-directly. All Minecraft operations use the authenticated mc-admin API.
+A small Python bridge between one official QQ bot group and Minecraft servers
+managed by mc-admin. It connects directly to QQ's HTTP API and WebSocket gateway.
+All Minecraft operations go through mc-admin.
 
-User-visible QQ and Minecraft messages are Chinese. Source code, logs,
-configuration, tests, and documentation are English.
+## Start locally
 
-## Features
-
-- `/list`, `/ping`, and `/l` show online servers and players.
-- `/say` and `/s` send attributed chat for players bound in-game.
-- QQ replies route back to the server associated with the original message.
-- `/whitelist`, `/ban`, `/unban`, and `/banlist` use fixed, validated RCON
-  commands.
-- `/restart` persists completion monitoring across bot restarts.
-- `\\` and `、、` in-game prefixes relay chat or manage `bind` state.
-- SQLite checkpoints and an outbox provide replayable, at-least-once delivery.
-- Database migrations run automatically before background workers start.
-
-## Requirements
-
-- Python 3.13
-- uv 0.12 or newer
-- mc-admin 7.1 with the bot integration API described in
-  [docs/mc-admin-api.md](docs/mc-admin-api.md)
-- A OneBot V11 implementation such as NapCat or Lagrange
-
-## Local Setup
-
-Install the locked environment:
+Requires Python 3.13+, uv and a reachable mc-admin API.
 
 ```powershell
 uv sync --frozen
-```
-
-Create `.env.bot` from `.env.bot.example`, replace every placeholder, then run:
-
-```powershell
+Copy-Item .env.bot.example .env.bot
 uv run mc-admin-qqbot
 ```
 
-The bot listens on `0.0.0.0:8080` by default. mc-admin may be temporarily
-offline during startup; the event consumer and outbox retry in the background.
+Fill in .env.bot before starting. Use the bot's AppID, AppSecret and the target
+group's **group_openid** from a received QQ event. Enable all group messages
+and proactive group messages for the official bot.
 
-## OneBot V11
+Every startup prints a new superuser claim token. Send it to the bot **privately**
+to claim persistent superuser access. Each token works once; existing superusers
+remain authorized. No configured QQ numbers are needed.
 
-Configure NapCat or Lagrange with a reverse WebSocket connection:
+## Bind a player
 
-```text
-ws://<bot-host>:8080/onebot/v11/ws
-```
+1. In Minecraft, type `\\bind` (two backslashes) or `、、bind`.
+2. The bot privately sends that player a four-digit code, valid for five minutes.
+3. Send only those four digits to the bot in a QQ private chat.
 
-Set the OneBot access token to the exact value of
-`MC_ADMIN_QQBOT_ONEBOT_ACCESS_TOKEN`. The logged-in QQ account must match
-`MC_ADMIN_QQBOT_QQ_BOT_ID`; a connection for another account is closed. Enable
-event and API traffic on the reverse WebSocket. A forward WebSocket or HTTP
-callback is not required.
+`\\bind get` shows the binding; `\\bind remove` removes it.
+No QQ number is requested or inferred. The nullable users.qq_id field is for
+manual maintenance only. Identity and group profiles refresh on every received
+message, including ordinary chat.
 
-NapCat and Lagrange configuration field names differ by release. In either
-implementation, the required values are the reverse WebSocket URL, access
-token, and expected QQ account. Do not expose the listener directly to an
-untrusted network.
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `/list`, `/ping`, `/l` | Servers and online players |
+| `/say <text> [/<server>]`, `/s` | Chat as the bound player's current name |
+| `/whitelist list [page] [/<server>]` | Whitelist, 20 names per page |
+| `/banlist [page] [/<server>]` | Bans, 20 names per page |
+| `/whitelist add/remove <player> [/<server>]` | Manage whitelist; admin only |
+| `/ban <player>`, `/unban <player>` | Manage bans; admin only |
+| `/restart /<server>` | Restart an explicitly selected server; admin only |
+| `/help` | Command help |
+
+Selectors match exact server IDs, then prefixes in game-port order. Without a
+selector, use the configured default or the first online server. Excluded
+servers cannot be selected. Current-message group owners/administrators and
+persisted superusers can manage servers. Private commands require superuser
+access; player confirmation and superuser claiming are open privately.
+
+Minecraft messages beginning with `\\` or `、、` are relayed proactively.
+Quoting a relay sends a bound user's reply to its original server. Long lists
+use compact text pages, without merged forwards.
 
 ## Configuration
 
-All variables use the `MC_ADMIN_QQBOT_` prefix and are read from the process
-environment or `.env.bot`.
+Settings use the MC_ADMIN_QQBOT_ prefix, from environment variables or .env.bot.
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `QQ_BOT_ID` | yes | QQ account used by the OneBot connection |
-| `QQ_GROUP_ID` | yes | The only group the bot serves |
-| `ONEBOT_ACCESS_TOKEN` | yes | Reverse WebSocket access token |
-| `MC_ADMIN_BASE_URL` | yes | mc-admin URL including the final `/api` |
-| `MC_ADMIN_MASTER_TOKEN` | yes | mc-admin master bearer token |
-| `SUPERUSERS` | no | JSON array of QQ IDs |
-| `EXCLUDED_SERVERS` | no | JSON array of case-sensitive server IDs |
-| `DEFAULT_SERVER` | no | Default case-sensitive server ID |
-| `DATABASE_URL` | no | SQLite async URL; default `sqlite+aiosqlite:///./data/bot.db` |
-| `RESTART_TIMEOUT_SECONDS` | no | Restart deadline; default `600` |
-| `RESTART_POLL_INTERVAL_SECONDS` | no | Status poll interval; default `5` |
-| `HOST` | no | Listener address; default `0.0.0.0` |
-| `PORT` | no | Listener port; default `8080` |
-| `LOG_LEVEL` | no | NoneBot log level; default `INFO` |
+| Suffix | Default / meaning |
+| --- | --- |
+| QQ_APP_ID, QQ_APP_SECRET | Required official bot credentials |
+| QQ_GROUP_OPENID | Required target group OpenID |
+| QQ_BOT_NAME | 罗伯特; shown in binding instructions |
+| MC_ADMIN_BASE_URL | Required URL ending in /api |
+| MC_ADMIN_MASTER_TOKEN | Required mc-admin bearer token |
+| EXCLUDED_SERVERS | []; JSON array of server IDs |
+| DEFAULT_SERVER | Optional server ID |
+| DATABASE_URL | sqlite+aiosqlite:///./data/official-bot.db |
+| RESTART_TIMEOUT_SECONDS | 600 |
+| RESTART_POLL_INTERVAL_SECONDS | 5 |
+| LOG_LEVEL | INFO |
 
-Collection values use JSON syntax, for example `[30000, 30001]` and
-`["staging", "benchmark"]`. The default server cannot also be excluded.
-
-When the host uses a system proxy and mc-admin is on a local or private
-address, set `NO_PROXY` for that host so HTTP and WebSocket connections bypass
-the proxy.
-
-## Database and Recovery
-
-Production startup never calls `metadata.create_all()`. It creates the data
-directory and runs `alembic upgrade head` before starting consumers. Migration
-IDs must match `YYYYMMDD_short_change`, use underscores, and remain at most 32
-characters. The initial revision is `20260729_initial_schema`.
-
-See [docs/operations.md](docs/operations.md) for backups, manual migration
-commands, cursor recovery, outbox delivery, and restart-watch behavior.
-
-## Containers
-
-Copy the ignored environment example, replace every deployment-specific value,
-then pull and run the published bot image:
+## Docker
 
 ```powershell
-Copy-Item .env.bot.example .env.bot
-docker compose --env-file .env.bot pull
-docker compose --env-file .env.bot up -d
+docker compose --env-file .env.bot up -d --build
+docker compose logs bot
 ```
 
-The committed `compose.yaml` contains only interpolated placeholders and safe
-defaults. Compose declares every runtime setting, defaults to
-`TZ=Asia/Shanghai`, and bind-mounts `./data` at `/app/data`. The checked-out
-migrated `data/bot.db` is therefore used directly. The Compose service does not
-deploy QQ or mc-admin; the configured mc-admin hostname must be reachable from
-the container.
+Compose builds the checked-out code and mounts ./data:/app/data. The image runs
+as UID/GID 1000. No inbound port or callback is required. The mc-admin address
+must be reachable **from the container**.
 
-## Development
+Startup creates a fresh schema if absent. There are no automatic migrations or
+old-database compatibility paths. Keep the previous database and transfer any
+desired data manually into a separate new database.
 
-Run the complete offline validation suite:
+## Development and docs
 
 ```powershell
-uv sync --frozen
 uv run ruff check .
 uv run pyright
-uv run pytest
-uv run alembic heads
+uv run pytest --no-cov tests/test_accounts.py::test_game_binding_requires_private_code_and_retains_identity
 ```
 
-The integration test starts a local FastAPI/Uvicorn mc-admin double and uses
-NoneBug for OneBot events. It requires no real QQ account, Minecraft server,
-mc-admin process, or Docker daemon.
+Run selected behavior tests locally. CI runs the full offline suite with a 95%
+branch-coverage gate and builds the application image. Tests use local HTTP,
+WebSocket and SQLite connections without external QQ or Minecraft accounts.
 
-See [docs/architecture.md](docs/architecture.md) for command ownership,
-extension points, and transactional rules for game-side commands.
+- [Behavior requirements](docs/requirements.md)
+- [Architecture](docs/architecture.md)
+- [Operations and recovery](docs/operations.md)
+- [mc-admin API contract](docs/mc-admin-api.md)
+- [QQ protocol verified with the test bot](docs/qq-protocol.md)

@@ -36,9 +36,10 @@ def server(
 
 def test_settings_validate_urls_database_and_defaults(tmp_path: Path) -> None:
     base = {
-        "qq_bot_id": 1,
-        "qq_group_id": 2,
-        "onebot_access_token": "secret",
+        "qq_app_id": "test-app",
+        "qq_group_openid": "test-group",
+        "qq_app_secret": "secret",
+        "_env_file": None,
         "mc_admin_base_url": "https://example.test/api/",
         "mc_admin_master_token": "secret",
         "database_url": f"sqlite+aiosqlite:///{(tmp_path / 'db').as_posix()}",
@@ -48,7 +49,7 @@ def test_settings_validate_urls_database_and_defaults(tmp_path: Path) -> None:
     assert settings.database_path == tmp_path / "db"
     with pytest.raises(ValidationError, match="must end with /api"):
         Settings(**{**base, "mc_admin_base_url": "https://example.test/root"})
-    with pytest.raises(ValidationError, match="only supports"):
+    with pytest.raises(ValidationError, match="Only sqlite"):
         Settings(**{**base, "database_url": "postgresql+asyncpg://localhost/db"})
     with pytest.raises(ValidationError, match="cannot be excluded"):
         Settings(**{**base, "default_server": "hidden", "excluded_servers": {"hidden"}})
@@ -56,12 +57,8 @@ def test_settings_validate_urls_database_and_defaults(tmp_path: Path) -> None:
         Settings(**{**base, "database_url": "sqlite+aiosqlite:///:memory:"})
     with pytest.raises(ValidationError, match="query parameters"):
         Settings(**{**base, "database_url": "sqlite+aiosqlite:///bot.db?mode=ro"})
-    with pytest.raises(ValidationError, match="positive"):
-        Settings(**{**base, "superusers": {-1}})
-    with pytest.raises(ValidationError, match="trimmed"):
-        Settings(**{**base, "default_server": " vanilla "})
-    with pytest.raises(ValidationError, match="trimmed"):
-        Settings(**{**base, "excluded_servers": {"hidden "}})
+    with pytest.raises(ValidationError, match="greater than 0"):
+        Settings(**{**base, "restart_timeout_seconds": 0})
 
 
 def test_visible_servers_and_list_format_are_stable() -> None:
@@ -83,6 +80,22 @@ def test_visible_servers_and_list_format_are_stable() -> None:
     assert format_server_list([server("off", 1, "CREATED")], set()) == (
         "现在没有服务器在运行"
     )
+
+
+def test_cli_settings_read_environment(monkeypatch, tmp_path):
+    values = {
+        "QQ_APP_ID": "environment-app",
+        "QQ_APP_SECRET": "environment-secret",
+        "QQ_GROUP_OPENID": "environment-group",
+        "MC_ADMIN_BASE_URL": "http://example.test/api",
+        "MC_ADMIN_MASTER_TOKEN": "environment-master-token",
+        "DATABASE_URL": f"sqlite+aiosqlite:///{tmp_path.as_posix()}/env.db",
+    }
+    for key, value in values.items():
+        monkeypatch.setenv("MC_ADMIN_QQBOT_" + key, value)
+    loaded = Settings.model_validate({})
+    assert loaded.qq_app_id == "environment-app"
+    assert loaded.qq_app_secret.get_secret_value() == "environment-secret"
 
 
 def test_target_selection_exact_prefix_default_and_safety() -> None:

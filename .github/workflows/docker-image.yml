@@ -1,9 +1,8 @@
-name: Docker Image CI
+name: Qualify and Publish Application
 
 on:
   push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -11,34 +10,66 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-      - name: Login to GHCR
-        uses: docker/login-action@v4
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.0"
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check src tests
+      - run: uv run pyright
+      - run: uv run pytest --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-coverage
+          path: coverage.xml
+
+  image:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker meta
+      - uses: docker/metadata-action@v6
         id: meta
-        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
             type=sha
-      - name: Build and push
-        uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@v7
         with:
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          push: ${{ startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push' }}
+          load: true
+          tags: |
+            mc-admin-qqbot:qualified
+            ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test installed image and writable database
+        run: |
+          docker run --rm --entrypoint python mc-admin-qqbot:qualified -c \
+            'import asyncio; from mc_admin_qqbot.database import Database; db = Database("sqlite+aiosqlite:///./data/smoke.db", "smoke"); asyncio.run(db.initialize()); asyncio.run(db.close())'
+      - name: Bind qualification receipt to commit
+        env:
+          QUALIFIED_SHA: ${{ github.sha }}
+        run: |
+          python -c 'import json, os; print(json.dumps({"sha": os.environ["QUALIFIED_SHA"], "validation": "passed", "coverage_gate": 95, "image_build_and_smoke": "passed"}))' > qualification.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualification
+          path: qualification.json
