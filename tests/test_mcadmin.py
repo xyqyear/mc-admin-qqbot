@@ -79,7 +79,8 @@ async def test_http_contract_server_selection_player_actions_and_task():
     app.router.add_route("*", "/api/{tail:.*}", handle)
     async with serve(app) as url, aiohttp.ClientSession() as http:
         client = McAdminClient(http, url + "/api/", "master")
-        result = await client.overview({"hidden"})
+        result = await client.overview(lambda server_id: server_id != "hidden")
+        assert await client.overview(lambda _: False) == []
         assert [server.status for server in result] == ["HEALTHY", "STARTING"]
         assert result[0].online_players[0].name == "Steve"
         assert (await client.player("uuid")).current_name == "Steve"

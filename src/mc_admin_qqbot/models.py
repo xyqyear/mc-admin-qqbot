@@ -63,6 +63,34 @@ class GroupMember(Base):
     last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 
+class QQGroup(Base):
+    __tablename__ = "qq_group"
+
+    app_id: Mapped[str] = mapped_column(String, primary_key=True)
+    openid: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str | None] = mapped_column(String)
+    joined: Mapped[bool] = mapped_column()
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    name_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class BotPreferences(Base):
+    __tablename__ = "bot_preferences"
+
+    app_id: Mapped[str] = mapped_column(String, primary_key=True)
+    fallback_group: Mapped[str | None] = mapped_column(String)
+    restart_timeout_seconds: Mapped[int] = mapped_column(default=600)
+    restart_poll_interval_seconds: Mapped[int] = mapped_column(default=5)
+
+
+class ServerGroupRule(Base):
+    __tablename__ = "server_group_rule"
+
+    app_id: Mapped[str] = mapped_column(String, primary_key=True)
+    server_id: Mapped[str] = mapped_column(String, primary_key=True)
+    group_openid: Mapped[str | None] = mapped_column(String)
+
+
 class BindRequest(Base):
     __tablename__ = "bind_request"
 

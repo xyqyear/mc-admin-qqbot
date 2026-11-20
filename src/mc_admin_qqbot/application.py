@@ -3,6 +3,8 @@ import logging
 import secrets
 import time
 
+import aiohttp
+
 from .binding import CODE_RE, Bindings
 from .commands import Commands
 from .config import Settings
@@ -10,7 +12,8 @@ from .database import Database
 from .domain import UserInputError
 from .mcadmin import McAdminClient, McAdminError
 from .models import User
-from .qq import QQClient, QQMessage
+from .private_settings import CALLBACK_PREFIX, PrivateSettings, callback_data
+from .qq import MESSAGE_EVENTS, QQClient, QQError, QQMessage
 from .relay import GameRelay
 from .workers import consume_game, deliver_pending, watch_restarts
 
@@ -25,17 +28,18 @@ class Application:
         qq: QQClient,
         mc: McAdminClient,
     ) -> None:
-        self.settings = settings
         self.database = database
         self.qq = qq
         self.mc = mc
-        self.bindings = Bindings(database, settings.qq_bot_name)
+        self.bindings = Bindings(database)
         self.commands = Commands(settings, database, mc)
-        self.relay = GameRelay(settings, database, self.bindings)
+        self.private_settings = PrivateSettings(database, qq, mc, self.bindings)
+        self.relay = GameRelay(database, self.bindings)
         self.claim_token: str | None = None
         self._claim_lock = asyncio.Lock()
         self._seen: dict[str, None] = {}
         self._attempts: dict[int, tuple[float, int]] = {}
+        self._group_refreshes: asyncio.Queue[str] = asyncio.Queue()
 
     async def startup(self) -> None:
         await self.database.initialize()
@@ -45,6 +49,7 @@ class Application:
             "请私聊机器人发送此口令。本次启动仅可使用一次，已有管理员权限保留。",
             flush=True,
         )
+        await self.private_settings.refresh_bot_name()
 
     async def claim_admin(self, message: QQMessage, user: User) -> bool:
         async with self._claim_lock:
@@ -68,23 +73,32 @@ class Application:
         self._attempts[user_id] = (started, attempts + 1)
         return attempts < 5
 
-    async def handle(self, event: dict) -> None:
-        message = QQMessage.from_event(event)
-        if message.author.get("bot") or (
-            message.scope == "group"
-            and message.destination != self.settings.qq_group_openid
-        ):
-            return
-        if message.id in self._seen:
-            return
-        user = await self.database.observe(message)
-        self._seen[message.id] = None
+    def remember(self, event_id: str) -> bool:
+        if event_id in self._seen:
+            return False
+        self._seen[event_id] = None
         if len(self._seen) > 4096:
             self._seen.pop(next(iter(self._seen)))
+        return True
+
+    async def handle(self, event: dict) -> None:
+        kind, data = event["t"], event["d"]
+        if group := data.get("group_openid"):
+            if await self.database.observe_group(group, kind, data.get("group_name")):
+                self._group_refreshes.put_nowait(group)
+        if kind == "INTERACTION_CREATE":
+            await self.handle_interaction(event)
+        elif kind in MESSAGE_EVENTS:
+            await self.handle_message(QQMessage.from_event(event))
+
+    async def handle_message(self, message: QQMessage) -> None:
+        if message.author.get("bot") or not self.remember(message.id):
+            return
+        user = await self.database.observe(message)
         try:
             if message.scope == "private":
                 if await self.claim_admin(message, user):
-                    response = "已绑定为超级管理员，权限已保存。"
+                    response = "已绑定为超级管理员。发送 /设置 管理机器人。"
                 elif CODE_RE.fullmatch(message.content):
                     if self.allow_code_attempt(user.id):
                         response = await self.bindings.confirm(user.id, message.content)
@@ -92,6 +106,13 @@ class Application:
                     else:
                         response = "验证码尝试过于频繁，请一分钟后再试"
                 elif user.is_superuser:
+                    if message.content:
+                        card = await self.private_settings.command(message.content)
+                        if card is not None:
+                            await self.qq.send_card(
+                                message.openid, card, msg_id=message.id
+                            )
+                            return
                     response = await self.commands.handle(message, user)
                 else:
                     return
@@ -104,11 +125,61 @@ class Application:
         except McAdminError:
             log.warning("command user=%s result=mc-admin-unavailable", user.id)
             response = "mc-admin 暂时不可用，请稍后再试"
+        except (QQError, aiohttp.ClientError, TimeoutError):
+            log.warning("failed to send settings card user=%s", user.id)
+            response = "设置卡片暂时无法显示，请稍后再试"
         except Exception as exc:
             log.error("QQ command failed type=%s", type(exc).__name__)
             response = "命令执行失败，请稍后再试"
         if response:
             await self.database.reply(message, response)
+
+    async def handle_interaction(self, event: dict) -> None:
+        data = event["d"]
+        target = data.get("data", {}).get("resolved", {}).get("button_data", "")
+        if not isinstance(target, str) or not target.startswith(CALLBACK_PREFIX):
+            return
+        interaction_id = data["id"]
+        if not self.remember(f"interaction:{interaction_id}"):
+            return
+        openid = data.get("user_openid")
+        action = callback_data(target)
+        allowed = bool(
+            action
+            and openid
+            and not data.get("group_openid")
+            and (data.get("scene") == "c2c" or data.get("chat_type") == 2)
+            and await self.database.is_superuser(openid)
+        )
+        try:
+            await self.qq.acknowledge(interaction_id, allowed=allowed)
+            if not allowed:
+                return
+            try:
+                card = await self.private_settings.click(action)
+            except UserInputError as exc:
+                card = await self.private_settings.home(str(exc))
+            except McAdminError:
+                card = await self.private_settings.home(
+                    "mc-admin 暂时不可用，请稍后再试"
+                )
+            await self.qq.send_card(
+                openid, card, event_id=event.get("id") or interaction_id
+            )
+        except (QQError, aiohttp.ClientError, TimeoutError):
+            log.warning("settings interaction failed")
+
+    async def refresh_group_names(self) -> None:
+        while True:
+            openid = await self._group_refreshes.get()
+            try:
+                name = await self.qq.group_name(openid)
+            except (QQError, aiohttp.ClientError, TimeoutError):
+                log.warning("QQ group name unavailable")
+            else:
+                if name:
+                    await self.database.save_group_name(openid, name)
+            await asyncio.sleep(2)
 
     async def consume_qq(self) -> None:
         async for event in self.qq.events():
@@ -120,4 +191,5 @@ class Application:
             tasks.create_task(self.consume_qq())
             tasks.create_task(consume_game(self.mc, self.database, self.relay))
             tasks.create_task(deliver_pending(self.database, self.qq, self.mc))
-            tasks.create_task(watch_restarts(self.settings, self.database, self.mc))
+            tasks.create_task(watch_restarts(self.database, self.mc))
+            tasks.create_task(self.refresh_group_names())

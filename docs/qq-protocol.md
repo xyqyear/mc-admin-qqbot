@@ -1,6 +1,6 @@
 # QQ protocol verified with the test bot
 
-Observed with the existing official bot and its test group on 2026-11-17.
+Observed with the existing official bot and its test group in November 2026.
 These are actual successful requests/events. IDs, names and tokens below are
 substituted. Platform permissions and message quotas may change independently.
 
@@ -12,8 +12,8 @@ QQBot <token> and X-Union-Appid. A real private reply once failed with 401 and
 succeeded after refreshing the token.
 
 GET /gateway/bot supplies the WebSocket URL. Hello opcode 10 supplies the
-heartbeat interval. Identify opcode 2 uses the token, intents 1 << 25 and shard
-[0, 1]. READY supplies session_id. Heartbeat opcode 1 carries the last sequence;
+heartbeat interval. Identify opcode 2 uses the token, intents `(1 << 25) | (1 << 26)`
+and shard [0, 1]. READY supplies session_id. Heartbeat opcode 1 carries the last sequence;
 opcode 11 acknowledges it. Resume uses opcode 6 with session_id and seq.
 
 ## Group capabilities
@@ -35,6 +35,11 @@ This member_role describes the **bot**, not the sender. An ordinary unmentioned
 message arrived as GROUP_MESSAGE_CREATE. Mentioned messages can also use this
 event after full-message reception is enabled. Accept GROUP_AT_MESSAGE_CREATE
 as well.
+
+GET /users/@me returned the bot's `username`. Received group messages carried
+`group_openid`. The tested GET /v2/groups/{group_openid}/info reply supplied
+`group_name`. Use group dispatches to discover groups and the info API to
+refresh their names. The bot reacts to GROUP_ADD_ROBOT and GROUP_DEL_ROBOT.
 
 ## Identity and profiles
 
@@ -102,7 +107,7 @@ msg_elements and parallel_message.msg_nodes; neither is needed for routing.
 ## Group command panel
 
 Use QQ's [create panel API](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_panels.post.html)
-with `scope: group`, `target_type: specific`, and the configured group in
+with `scope: group`, `target_type: specific`, and the chosen group in
 `group_openids`. Configure these items in order with `type: command`.
 
 | Name | Description | `only_admin` |
@@ -122,6 +127,20 @@ the toolbar, and selected `/help`. QQ filled `@罗伯特 /help`, and sending it
 returned help including the management section. Typing a slash alone did not
 open the panel in the tested Windows client. Member-side visibility was not
 tested on QQ. Command execution and help use the bot's own role check.
+
+## Private settings cards
+
+Private messages accepted `msg_type: 2` with `markdown.content` and
+`keyboard.content.rows` containing custom buttons. The tested Windows client
+showed callback buttons below the text. A type 2 command button with
+`enter: false` prefilled the custom setting command in the input box.
+
+Type 1 buttons arrived through INTERACTION_CREATE. The private interaction
+carried `d.user_openid` and `d.data.resolved.button_data`. PUT
+/interactions/{d.id} with `{"code":0}` returned HTTP 200 with an empty body.
+The bot sent the next card using the interaction's event ID after acknowledging
+it. Subpages limit the keyboard to five rows.
+[Official QQ message button protocol](https://github.com/tencent-connect/bot-docs/blob/main/docs/develop/api-v2/server-inter/message/trans/msg-btn.md).
 
 ## Player list images
 

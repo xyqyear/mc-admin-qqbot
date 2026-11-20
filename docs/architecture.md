@@ -1,7 +1,8 @@
 # Architecture
 
-One aiohttp session, an async SQLite engine and four asyncio tasks: QQ receive,
-mc-admin event receive, delivery and restart monitoring.
+One aiohttp session, an async SQLite engine and five asyncio tasks for QQ
+receive, mc-admin event receive, delivery, restart monitoring and group name
+refresh.
 
 | Module | Responsibility |
 | --- | --- |
@@ -9,8 +10,9 @@ mc-admin event receive, delivery and restart monitoring.
 | mcadmin.py | mc-admin HTTP/WebSocket wire models and client |
 | application.py | Startup, profile refresh, private enrollment, dispatch, lifecycle |
 | commands.py, domain.py, roster.py | QQ commands, permissions, targeting, roster rendering |
+| private_settings.py | Private superuser settings cards and actions |
 | binding.py, relay.py | Game initiation, confirmation, atomic game-event handling |
-| models.py, database.py | Profiles, outbox, routes, cursor, restart watches |
+| models.py, database.py | Profiles, group directory, settings, outbox, routes, cursor, restart watches |
 | workers.py | Delivery retry, reconnect and restart completion |
 | config.py, __main__.py | Settings and process resources |
 
@@ -40,6 +42,11 @@ external QQ command mutations are not exactly once across process crashes.
 Roster PNGs are stored as SQLite BLOB values in the existing outbox body column.
 After a successful send, the delivery record keeps the remote ID and drops its
 image bytes.
+
+Group routing resolves a server's explicit rule before consulting the default.
+An explicit empty rule means exclusion. A missing rule uses the default. The
+group must be marked joined to receive messages or see the server. Delivery
+resolves the current destination again before a proactive send.
 
 ## Protocol evidence
 

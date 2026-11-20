@@ -15,9 +15,9 @@ BIND_HELP = "绑定命令：bind、bind get、bind remove、bind help"
 
 
 class Bindings:
-    def __init__(self, database: Database, bot_name: str) -> None:
+    def __init__(self, database: Database) -> None:
         self.database = database
-        self.bot_name = bot_name
+        self.bot_name = "QQ 机器人"
 
     async def game(self, session: AsyncSession, event: ChatEvent, argument: str) -> str:
         uuid = event.player.uuid

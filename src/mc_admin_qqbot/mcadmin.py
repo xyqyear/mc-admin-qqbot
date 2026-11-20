@@ -176,10 +176,21 @@ class McAdminClient:
         except (aiohttp.ClientError, TimeoutError) as exc:
             raise McAdminUnavailable("mc-admin is unavailable") from exc
 
-    async def overview(self, excluded: set[str] | None = None) -> list[ServerOverview]:
-        metadata = self.validate(
+    async def servers(self) -> list[ServerMetadata]:
+        return self.validate(
             await self.request("GET", "/servers/"), metadata_adapter.validate_python
         )
+
+    async def overview(
+        self, visible: Callable[[str], bool] | None = None
+    ) -> list[ServerOverview]:
+        metadata = [
+            server
+            for server in await self.servers()
+            if visible is None or visible(server.id)
+        ]
+        if not metadata:
+            return []
         monitoring = await self.monitoring()
 
         async def describe(server: ServerMetadata) -> ServerOverview:
@@ -203,15 +214,7 @@ class McAdminClient:
                 online_players=players,
             )
 
-        return list(
-            await asyncio.gather(
-                *(
-                    describe(server)
-                    for server in metadata
-                    if server.id not in (excluded or set())
-                )
-            )
-        )
+        return list(await asyncio.gather(*(describe(server) for server in metadata)))
 
     async def monitoring(self) -> Monitoring:
         return self.validate(

@@ -1,4 +1,5 @@
 import itertools
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,7 +18,7 @@ from mc_admin_qqbot.mcadmin import (
     PlayerDetail,
     ServerOverview,
 )
-from mc_admin_qqbot.models import utc_now
+from mc_admin_qqbot.models import ServerGroupRule, utc_now
 from mc_admin_qqbot.qq import QQClient, QQMessage, SentMessage
 
 ids = itertools.count(1)
@@ -69,6 +70,29 @@ def message(text: str = "", **kwargs: Any) -> QQMessage:
     return QQMessage.from_event(make_event(text, **kwargs))
 
 
+def interaction(
+    action: list[str] | str, *, openid: str = "user-one", group: str | None = None
+) -> dict[str, Any]:
+    number = next(ids)
+    button_data = (
+        "settings:" + json.dumps(action) if isinstance(action, list) else action
+    )
+    return {
+        "op": 0,
+        "t": "INTERACTION_CREATE",
+        "id": f"event-{number}",
+        "d": {
+            "id": f"interaction-{number}",
+            "type": 11,
+            "scene": "group" if group else "c2c",
+            "chat_type": 1 if group else 2,
+            "user_openid": openid,
+            **({"group_openid": group} if group else {}),
+            "data": {"resolved": {"button_id": "0-0", "button_data": button_data}},
+        },
+    }
+
+
 def chat(text: str, cursor: str = "1", **overrides: Any) -> ChatEvent:
     return ChatEvent.model_validate(
         {
@@ -110,12 +134,9 @@ def settings(tmp_path: Path) -> Settings:
     values: dict[str, Any] = {
         "qq_app_id": "test-app",
         "qq_app_secret": "test-secret",
-        "qq_group_openid": "test-group",
         "mc_admin_base_url": "http://example.test/api",
         "mc_admin_master_token": "test-master-token",
-        "excluded_servers": {"hidden"},
         "database_url": f"sqlite+aiosqlite:///{(tmp_path / 'bot.db').as_posix()}",
-        "restart_poll_interval_seconds": 0.01,
         "_env_file": None,
     }
     return Settings(**values)
@@ -132,9 +153,21 @@ async def database(settings: Settings) -> AsyncIterator[Database]:
 
 
 @pytest.fixture
+async def routed_database(database: Database) -> Database:
+    await database.observe_group("test-group", "GROUP_ADD_ROBOT", "测试群")
+    async with database.sessions.begin() as session:
+        settings = await database.preferences(session)
+        settings.fallback_group = "test-group"
+        session.add(ServerGroupRule(app_id=database.app_id, server_id="hidden"))
+    return database
+
+
+@pytest.fixture
 def mc() -> AsyncMock:
     client = AsyncMock(spec=McAdminClient)
-    client.overview.return_value = [server(), server("creative", 25566)]
+    metadata = [server(), server("creative", 25566), server("hidden", 25567)]
+    client.servers.return_value = metadata
+    client.overview.side_effect = lambda visible: [s for s in metadata if visible(s.id)]
     client.player.return_value = PlayerDetail(
         player_db_id=1, uuid="player-uuid", current_name="NewName"
     )
@@ -147,9 +180,11 @@ def mc() -> AsyncMock:
 def qq() -> AsyncMock:
     client = AsyncMock(spec=QQClient)
     client.send.return_value = SentMessage("sent-id", "REFIDX_sent")
+    client.bot_name.return_value = "罗伯特"
+    client.group_name.return_value = "测试群"
     return client
 
 
 @pytest.fixture
-def app(settings: Settings, database: Database, mc: AsyncMock, qq: AsyncMock):
-    return Application(settings, database, qq, mc)
+def app(settings: Settings, routed_database: Database, mc: AsyncMock, qq: AsyncMock):
+    return Application(settings, routed_database, qq, mc)

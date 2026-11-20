@@ -6,17 +6,18 @@ import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 
 from .models import Scope
 
 log = logging.getLogger(__name__)
-MESSAGE_EVENTS = {
+GROUP_MESSAGE_EVENTS = {
     "GROUP_MESSAGE_CREATE",
     "GROUP_AT_MESSAGE_CREATE",
-    "C2C_MESSAGE_CREATE",
 }
+MESSAGE_EVENTS = {*GROUP_MESSAGE_EVENTS, "C2C_MESSAGE_CREATE"}
 
 
 class QQError(RuntimeError):
@@ -31,6 +32,20 @@ class QQError(RuntimeError):
 class SentMessage:
     id: str
     ref_idx: str | None
+
+
+@dataclass(frozen=True)
+class Button:
+    label: str
+    data: str
+    primary: bool = False
+    command: bool = False
+
+
+@dataclass(frozen=True)
+class Card:
+    markdown: str
+    rows: list[list[Button]]
 
 
 @dataclass(frozen=True)
@@ -126,12 +141,14 @@ class QQClient:
                     "X-Union-Appid": self.app_id,
                 },
             ) as response:
-                data = await response.json()
                 if response.status == 401 and attempt == 0:
                     attempt += 1
                     if self._token == token:
                         self._expires_at = 0
                     continue
+                if response.status < 400 and not await response.read():
+                    return {}
+                data = await response.json()
                 if response.status >= 400:
                     raise QQError(response.status, int(data.get("code", 0)))
                 return data
@@ -172,6 +189,62 @@ class QQClient:
     async def group_state(self, group_openid: str) -> dict[str, Any]:
         return await self.request("GET", f"/v2/groups/{group_openid}/bot_state")
 
+    async def bot_name(self) -> str | None:
+        return (await self.request("GET", "/users/@me")).get("username")
+
+    async def group_name(self, openid: str) -> str | None:
+        info = await self.request("GET", f"/v2/groups/{quote(openid, safe='')}/info")
+        return info.get("group_name")
+
+    async def acknowledge(self, interaction_id: str, *, allowed: bool) -> None:
+        await self.request(
+            "PUT",
+            f"/interactions/{quote(interaction_id, safe='')}",
+            {"code": 0 if allowed else 4},
+        )
+
+    async def send_card(
+        self,
+        openid: str,
+        card: Card,
+        *,
+        msg_id: str | None = None,
+        event_id: str | None = None,
+    ) -> None:
+        rows = [
+            {
+                "buttons": [
+                    {
+                        "id": f"{row_index}-{button_index}",
+                        "render_data": {
+                            "label": button.label,
+                            "visited_label": button.label,
+                            "style": int(button.primary),
+                        },
+                        "action": {
+                            "type": 2 if button.command else 1,
+                            "permission": {"type": 2},
+                            "data": button.data,
+                            "enter": False,
+                            "unsupport_tips": "请使用支持消息按钮的 QQ 客户端",
+                        },
+                    }
+                    for button_index, button in enumerate(row)
+                ]
+            }
+            for row_index, row in enumerate(card.rows)
+        ]
+        body: dict[str, Any] = {
+            "msg_type": 2,
+            "markdown": {"content": card.markdown},
+            "keyboard": {"content": {"rows": rows}},
+        }
+        if event_id:
+            body["event_id"] = event_id
+        else:
+            body["msg_id"] = msg_id
+        await self.request("POST", f"/v2/users/{quote(openid, safe='')}/messages", body)
+
     async def _heartbeat(
         self, ws: aiohttp.ClientWebSocketResponse, interval: float
     ) -> None:
@@ -207,7 +280,11 @@ class QQClient:
                     else:
                         identity = {
                             "op": 2,
-                            "d": {"token": token, "intents": 1 << 25, "shard": [0, 1]},
+                            "d": {
+                                "token": token,
+                                "intents": (1 << 25) | (1 << 26),
+                                "shard": [0, 1],
+                            },
                         }
                     await ws.send_json(identity)
                     self._acked = True
@@ -237,7 +314,11 @@ class QQClient:
                                 self.ready.set()
                                 delay = 1
                                 log.info("QQ gateway connected")
-                            elif name in MESSAGE_EVENTS:
+                            elif (
+                                name in MESSAGE_EVENTS
+                                or name == "INTERACTION_CREATE"
+                                or event["d"].get("group_openid")
+                            ):
                                 yield event
                     if ws.close_code in {4006, 4007, 4009}:
                         self._session_id = None

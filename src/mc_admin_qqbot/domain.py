@@ -18,15 +18,9 @@ class TargetedText:
     explicit: bool
 
 
-def visible_online_servers(
-    servers: list[ServerOverview], excluded: set[str]
-) -> list[ServerOverview]:
+def online_servers(servers: list[ServerOverview]) -> list[ServerOverview]:
     return sorted(
-        (
-            server
-            for server in servers
-            if server.id not in excluded and server.status in ONLINE_STATUSES
-        ),
+        (server for server in servers if server.status in ONLINE_STATUSES),
         key=lambda server: (server.game_port, server.id),
     )
 
@@ -43,13 +37,12 @@ def resolve_selector(
 def parse_targeted_text(
     raw: str,
     servers: list[ServerOverview],
-    excluded: set[str],
     default_server: str | None,
     *,
     strict_selector: bool,
     require_explicit: bool = False,
 ) -> TargetedText:
-    available = visible_online_servers(servers, excluded)
+    available = online_servers(servers)
     if not available:
         raise UserInputError("当前没有可用的服务器")
 
@@ -79,8 +72,8 @@ def parse_targeted_text(
     return TargetedText(text, server, False)
 
 
-def format_server_list(servers: list[ServerOverview], excluded: set[str]) -> str:
-    available = visible_online_servers(servers, excluded)
+def format_server_list(servers: list[ServerOverview]) -> str:
+    available = online_servers(servers)
     if not available:
         return "现在没有服务器在运行"
     populated: list[str] = []

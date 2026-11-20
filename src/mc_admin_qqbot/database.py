@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
@@ -8,17 +9,32 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from .models import (
     Base,
+    BotPreferences,
     EventCheckpoint,
     GroupMember,
     MessageRoute,
     OutboundDelivery,
+    QQGroup,
     QQIdentity,
     RestartWatch,
     Scope,
+    ServerGroupRule,
     User,
     utc_now,
 )
-from .qq import QQMessage
+from .qq import GROUP_MESSAGE_EVENTS, QQMessage
+
+
+@dataclass(frozen=True)
+class GroupRoutes:
+    fallback: str | None
+    rules: dict[str, str | None]
+    groups: dict[str, QQGroup]
+
+    def destination(self, server_id: str) -> str | None:
+        openid = self.rules.get(server_id, self.fallback)
+        group = self.groups.get(openid) if openid else None
+        return group.openid if group and group.joined else None
 
 
 class Database:
@@ -40,9 +56,78 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with self.engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+            await connection.execute(
+                insert(BotPreferences)
+                .values(app_id=self.app_id)
+                .on_conflict_do_nothing()
+            )
 
     async def close(self) -> None:
         await self.engine.dispose()
+
+    async def preferences(self, session: AsyncSession) -> BotPreferences:
+        preferences = await session.get(BotPreferences, self.app_id)
+        assert preferences is not None
+        return preferences
+
+    async def group_routes(self, session: AsyncSession) -> GroupRoutes:
+        preferences = await self.preferences(session)
+        rules = await session.scalars(
+            select(ServerGroupRule).where(ServerGroupRule.app_id == self.app_id)
+        )
+        groups = await session.scalars(
+            select(QQGroup).where(QQGroup.app_id == self.app_id)
+        )
+        return GroupRoutes(
+            preferences.fallback_group,
+            {rule.server_id: rule.group_openid for rule in rules},
+            {group.openid: group for group in groups},
+        )
+
+    async def observe_group(self, openid: str, event: str, name: str | None) -> bool:
+        now = utc_now()
+        async with self.sessions.begin() as session:
+            group = await session.get(QQGroup, (self.app_id, openid))
+            left = event == "GROUP_DEL_ROBOT"
+            if group is None:
+                group = QQGroup(app_id=self.app_id, openid=openid, joined=not left)
+                session.add(group)
+            elif left:
+                group.joined = False
+            elif not group.joined and (
+                event == "GROUP_ADD_ROBOT" or event in GROUP_MESSAGE_EVENTS
+            ):
+                group.joined = True
+                group.name_checked_at = None
+            group.last_seen_at = now
+            if name:
+                group.name = name
+                group.name_checked_at = now
+            elif group.joined and (
+                group.name_checked_at is None
+                or now - group.name_checked_at >= timedelta(minutes=10)
+            ):
+                group.name_checked_at = now
+                return True
+        return False
+
+    async def save_group_name(self, openid: str, name: str) -> None:
+        async with self.sessions.begin() as session:
+            group = await session.get(QQGroup, (self.app_id, openid))
+            if group and group.joined:
+                group.name = name
+
+    async def is_superuser(self, openid: str) -> bool:
+        async with self.sessions() as session:
+            return bool(
+                await session.scalar(
+                    select(User.is_superuser)
+                    .join(QQIdentity)
+                    .where(
+                        QQIdentity.app_id == self.app_id, QQIdentity.openid == openid
+                    )
+                )
+            )
 
     async def observe(self, message: QQMessage) -> User:
         async with self.sessions.begin() as session:
@@ -202,6 +287,7 @@ class Database:
             row = await session.get(OutboundDelivery, delivery.id)
             assert row is not None
             row.status = "sent"
+            row.destination = delivery.destination
             row.remote_message_id = message_id
             row.last_error = None
             if isinstance(row.body, bytes):

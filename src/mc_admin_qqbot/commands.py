@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import timedelta
 
 from sqlalchemy import delete
@@ -19,6 +20,7 @@ from .domain import (
 )
 from .mcadmin import McAdminClient, McAdminResponseError, McAdminUnavailable
 from .models import RestartWatch, User, utc_now
+from .private_settings import SETTINGS_HELP
 from .qq import QQMessage
 from .roster import render_player_list
 
@@ -35,12 +37,22 @@ class Commands:
         self.database = database
         self.mc = mc
 
-    async def target(self, raw: str, *, chat: bool = False, restart: bool = False):
+    async def visibility(self, message: QQMessage) -> Callable[[str], bool]:
+        if message.scope == "private":
+            return lambda _: True
+        async with self.database.sessions() as session:
+            routes = await self.database.group_routes(session)
+        return lambda server_id: routes.destination(server_id) == message.destination
+
+    async def target(
+        self, message: QQMessage, raw: str, *, chat: bool = False, restart: bool = False
+    ):
+        visible = await self.visibility(message)
+        default = self.settings.default_server
         return parse_targeted_text(
             raw,
-            await self.mc.overview(self.settings.excluded_servers),
-            self.settings.excluded_servers,
-            self.settings.default_server,
+            await self.mc.overview(visible),
+            default if default and visible(default) else None,
             strict_selector=not chat,
             require_explicit=restart,
         )
@@ -70,21 +82,23 @@ class Commands:
         log.info("command user=%s action=%s context=%s", user.id, action, message.scope)
         match action:
             case "help":
-                return f"{HELP_TEXT}\n\n{ADMIN_HELP_TEXT}" if admin else HELP_TEXT
+                help_text = f"{HELP_TEXT}\n\n{ADMIN_HELP_TEXT}" if admin else HELP_TEXT
+                if message.scope == "private" and user.is_superuser:
+                    help_text += f"\n\n{SETTINGS_HELP}"
+                return help_text
             case "list":
                 return format_server_list(
-                    await self.mc.overview(self.settings.excluded_servers),
-                    self.settings.excluded_servers,
+                    await self.mc.overview(await self.visibility(message))
                 )
             case "say":
                 await self.say(message, user, argument)
                 return None
             case "whitelist":
-                return await self.whitelist(argument)
+                return await self.whitelist(message, argument)
             case "banlist":
-                return await self.player_list("banlist", argument)
+                return await self.player_list(message, "banlist", argument)
             case "ban" | "unban":
-                target = await self.target(argument)
+                target = await self.target(message, argument)
                 player = validate_player_name(target.text)
                 command = "ban" if action == "ban" else "pardon"
                 output = await self.mc.rcon(target.server.id, f"{command} {player}")
@@ -106,12 +120,12 @@ class Commands:
         if user.player_uuid is None:
             raise UserInputError("请先在游戏内输入 \\\\bind，再私聊机器人提交验证码")
         if routed_server is None:
-            target = await self.target(raw, chat=True)
+            target = await self.target(message, raw, chat=True)
             text, server_id = target.text, target.server.id
         else:
+            if not (await self.visibility(message))(routed_server):
+                raise UserInputError("该服务器在本群不可用")
             text, server_id = raw.strip(), routed_server
-        if server_id in self.settings.excluded_servers:
-            raise UserInputError("该服务器已被排除")
         if not text:
             raise UserInputError("消息不能为空")
         player = await self.mc.player(user.player_uuid)
@@ -121,21 +135,21 @@ class Commands:
             "command user=%s action=say server=%s result=success", user.id, server_id
         )
 
-    async def whitelist(self, raw: str) -> str | bytes:
+    async def whitelist(self, message: QQMessage, raw: str) -> str | bytes:
         operation, _, rest = raw.strip().partition(" ")
         if operation == "list":
-            return await self.player_list("whitelist", rest)
+            return await self.player_list(message, "whitelist", rest)
         if operation not in {"add", "remove"}:
             raise UserInputError(
                 "用法：/whitelist list [/<服务器>] 或 add/remove <玩家> [/<服务器>]"
             )
-        target = await self.target(rest)
+        target = await self.target(message, rest)
         player = validate_player_name(target.text)
         output = await self.mc.rcon(target.server.id, f"whitelist {operation} {player}")
         return translate_action(f"whitelist_{operation}", player, output)
 
-    async def player_list(self, kind: str, raw: str) -> str | bytes:
-        target = await self.target(raw)
+    async def player_list(self, message: QQMessage, kind: str, raw: str) -> str | bytes:
+        target = await self.target(message, raw)
         whitelist = kind == "whitelist"
         label = "白名单" if whitelist else "封禁名单"
         if target.text:
@@ -151,12 +165,13 @@ class Commands:
         return await asyncio.to_thread(render_player_list, label, server_id, names)
 
     async def restart(self, message: QQMessage, user: User, raw: str) -> str:
-        target = await self.target(raw, restart=True)
+        target = await self.target(message, raw, restart=True)
         if target.text:
             raise UserInputError("用法：/restart /<服务器>")
         server_id = target.server.id
         try:
             async with self.database.sessions.begin() as session:
+                preferences = await self.database.preferences(session)
                 session.add(
                     RestartWatch(
                         server_id=server_id,
@@ -165,7 +180,7 @@ class Commands:
                         destination=message.destination,
                         reply_msg_id=message.id,
                         deadline=utc_now()
-                        + timedelta(seconds=self.settings.restart_timeout_seconds),
+                        + timedelta(seconds=preferences.restart_timeout_seconds),
                     )
                 )
         except IntegrityError as exc:

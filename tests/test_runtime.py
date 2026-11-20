@@ -8,14 +8,14 @@ from unittest.mock import patch
 import aiohttp
 import pytest
 from aiohttp import web
-from conftest import chat, make_event, serve
+from conftest import chat, interaction, make_event, serve
 from PIL import Image
 from sqlalchemy import select
 
 from mc_admin_qqbot.__main__ import main, run
 from mc_admin_qqbot.application import Application
 from mc_admin_qqbot.mcadmin import McAdminClient
-from mc_admin_qqbot.models import BindRequest, QQIdentity, User, utc_now
+from mc_admin_qqbot.models import BindRequest, QQGroup, QQIdentity, User, utc_now
 from mc_admin_qqbot.qq import QQClient
 
 
@@ -32,6 +32,7 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
     game_events = asyncio.Queue()
     qq_posts = []
     qq_uploads = []
+    acknowledgments = []
     game_posts = []
     operations = []
     task_state = "running"
@@ -94,6 +95,16 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
         qq_uploads.append(await request.json())
         return web.json_response({"file_info": "whitelist-image"})
 
+    async def acknowledge(request):
+        acknowledgments.append((request.match_info["id"], await request.json()))
+        return web.Response()
+
+    async def self_info(_):
+        return web.json_response({"username": "罗伯特"})
+
+    async def group_info(_):
+        return web.json_response({"group_name": "机器人测试群"})
+
     async def handle_mc(request):
         path = request.path.removeprefix("/api")
         if request.method == "POST":
@@ -144,10 +155,16 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
     server.router.add_post("/token", token)
     server.router.add_get("/gateway/bot", gateway)
     server.router.add_get("/qq-ws", qq_socket)
+    server.router.add_get("/users/@me", self_info)
+    server.router.add_get("/v2/groups/test-group/info", group_info)
+    server.router.add_put("/interactions/{id}", acknowledge)
     server.router.add_get("/api/events", game_socket)
     server.router.add_post("/v2/{kind}/{target}/messages", handle_qq)
     server.router.add_post("/v2/groups/test-group/files", upload_image)
     server.router.add_route("*", "/api/{tail:.*}", handle_mc)
+    async with database.sessions.begin() as session:
+        preferences = await database.preferences(session)
+        preferences.restart_poll_interval_seconds = 1
     async with serve(server) as url, aiohttp.ClientSession() as http:
         settings.mc_admin_base_url = url + "/api"
         qq = QQClient(
@@ -167,6 +184,50 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
                     return user is not None and user.is_superuser
 
             await eventually(is_admin)
+            await qq_events.put(
+                {"op": 0, "t": "GROUP_ADD_ROBOT", "d": {"group_openid": "test-group"}}
+            )
+
+            async def has_group_name():
+                async with database.sessions() as session:
+                    group = await session.get(QQGroup, ("test-app", "test-group"))
+                    return group is not None and group.name == "机器人测试群"
+
+            await eventually(has_group_name)
+            settings_request = make_event("/设置", private=True)
+            await qq_events.put(settings_request)
+
+            async def settings_card(index):
+                cards = [body for body in qq_posts if body["msg_type"] == 2]
+                return cards[index] if index < len(cards) else None
+
+            await eventually(lambda: settings_card(0))
+            root = await settings_card(0)
+            assert root is not None
+            assert root["msg_id"] == settings_request["d"]["id"]
+            assert "罗伯特" in root["markdown"]["content"]
+            default_button = root["keyboard"]["content"]["rows"][0]["buttons"][1]
+            assert default_button["render_data"]["label"] == "设置默认群"
+            assert default_button["action"]["type"] == 1
+            choose_event = interaction(default_button["action"]["data"])
+            await qq_events.put(choose_event)
+            await eventually(lambda: settings_card(1))
+            groups = await settings_card(1)
+            assert groups is not None
+            assert groups["event_id"] == choose_event["id"]
+            assert "设置 › 默认群" in groups["markdown"]["content"]
+            group_button = groups["keyboard"]["content"]["rows"][0]["buttons"][0]
+            assert group_button["render_data"]["label"] == "机器人测试群"
+            bind_event = interaction(group_button["action"]["data"])
+            await qq_events.put(bind_event)
+            await eventually(lambda: settings_card(2))
+            confirmation = await settings_card(2)
+            assert confirmation is not None
+            assert "默认群已更新为 机器人测试群" in confirmation["markdown"]["content"]
+            assert acknowledgments == [
+                (choose_event["d"]["id"], {"code": 0}),
+                (bind_event["d"]["id"], {"code": 0}),
+            ]
             await game_events.put(chat("、、bind").model_dump(mode="json"))
 
             async def has_private_code():
@@ -174,6 +235,7 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
 
             await eventually(has_private_code)
             assert game_posts[0]["target_player"] == "Steve"
+            assert "罗伯特" in game_posts[0]["message"]
             async with database.sessions() as session:
                 code = (await session.scalar(select(BindRequest))).code
             assert code in game_posts[0]["message"]
@@ -189,11 +251,13 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
             await game_events.put(chat("、、来自游戏", "2").model_dump(mode="json"))
 
             async def has_relay():
-                return any("来自游戏" in body["content"] for body in qq_posts)
+                return any("来自游戏" in body.get("content", "") for body in qq_posts)
 
             await eventually(has_relay)
             index = next(
-                i for i, body in enumerate(qq_posts, 1) if "来自游戏" in body["content"]
+                i
+                for i, body in enumerate(qq_posts, 1)
+                if "来自游戏" in body.get("content", "")
             )
             relay = qq_posts[index - 1]
             assert "msg_id" not in relay
@@ -210,7 +274,7 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
                 return bool(await database.watches()) and bool(operations)
 
             await eventually(is_restarting)
-            assert not any("重启完成" in body["content"] for body in qq_posts)
+            assert not any("重启完成" in body.get("content", "") for body in qq_posts)
             health = "STARTING"
             task_state = "completed"
             await asyncio.sleep(0.05)
@@ -218,7 +282,7 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
             health = "HEALTHY"
 
             async def is_finished():
-                return any("重启完成" in body["content"] for body in qq_posts)
+                return any("重启完成" in body.get("content", "") for body in qq_posts)
 
             await eventually(is_finished)
             assert await database.watches() == []

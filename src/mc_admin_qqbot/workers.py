@@ -4,7 +4,6 @@ import logging
 import aiohttp
 from sqlalchemy import delete
 
-from .config import Settings
 from .database import Database
 from .mcadmin import (
     ChatEvent,
@@ -53,6 +52,14 @@ async def deliver(
             )
             await database.delivered(row)
         else:
+            if row.channel == "group" and row.server_id and not row.reply_msg_id:
+                async with database.sessions() as session:
+                    routes = await database.group_routes(session)
+                destination = routes.destination(row.server_id)
+                if destination is None:
+                    await database.failed(row, "No active QQ group", permanent=True)
+                    return
+                row.destination = destination
             sent = await qq.send(
                 row.channel,
                 row.destination,
@@ -81,15 +88,22 @@ async def deliver_pending(database: Database, qq: QQClient, mc: McAdminClient) -
 
 async def finish_restart(database: Database, watch: RestartWatch, text: str) -> None:
     async with database.sessions.begin() as session:
-        await database.enqueue(
-            session,
-            key=f"restart:{watch.server_id}:{watch.deadline.isoformat()}",
-            channel=watch.scope,
-            destination=watch.destination,
-            body=text,
-            reply_msg_id=watch.reply_msg_id if watch.scope == "private" else None,
-            reply_seq=2,
+        destination = (
+            watch.destination
+            if watch.scope == "private"
+            else (await database.group_routes(session)).destination(watch.server_id)
         )
+        if destination:
+            await database.enqueue(
+                session,
+                key=f"restart:{watch.server_id}:{watch.deadline.isoformat()}",
+                channel=watch.scope,
+                destination=destination,
+                body=text,
+                server_id=watch.server_id if watch.scope == "group" else None,
+                reply_msg_id=watch.reply_msg_id if watch.scope == "private" else None,
+                reply_seq=2,
+            )
         await session.execute(
             delete(RestartWatch).where(RestartWatch.server_id == watch.server_id)
         )
@@ -126,10 +140,10 @@ async def check_restart(
         return
 
 
-async def watch_restarts(
-    settings: Settings, database: Database, mc: McAdminClient
-) -> None:
+async def watch_restarts(database: Database, mc: McAdminClient) -> None:
     while True:
         for watch in await database.watches():
             await check_restart(database, mc, watch)
-        await asyncio.sleep(settings.restart_poll_interval_seconds)
+        async with database.sessions() as session:
+            preferences = await database.preferences(session)
+        await asyncio.sleep(preferences.restart_poll_interval_seconds)

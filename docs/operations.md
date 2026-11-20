@@ -3,15 +3,22 @@
 ## Deployment
 
 Fill .env.bot from the example. The QQ bot needs all-message reception and
-proactive-message permission in the target group. Use group_openid, not a numeric
-QQ group number. Only outbound HTTP/WebSocket connections are used.
+proactive-message permission in each connected group. Group names and settings
+cards use the official group info and custom Markdown button capabilities.
+Only outbound HTTP and WebSocket connections are used.
 
 Startup creates missing tables and prints a random superuser claim token.
 Claim it privately once. Console access can grant persistent administration.
 Restarting issues another token without clearing existing administrators.
 
+The bot discovers groups from received events. For a group it already joined,
+request an @mention so the group appears in the private `/设置` group picker.
+Select a default group and any server-specific overrides to enable routing.
+After a leave event, a configured group stays visible as exited until it
+rejoins. Server routes to it are suspended.
+
 Docker stores data under ./data, writable by UID/GID 1000. Deploy the checkout
-with docker compose --env-file .env.bot up -d --build. Set NO_PROXY for a private
+with docker compose --env-file .env.bot up -d. Set NO_PROXY for a private
 mc-admin host if a proxy is configured.
 
 ## Database
@@ -52,8 +59,10 @@ uncertainty and do not resubmit. Unknown submissions eventually time out.
 Poll accepted tasks. Pending/running is not complete. Failed/cancelled tasks
 notify failure. Completed tasks need a ready healthy sample newer than ended_at
 and at most six seconds old. Missing task records and deadline expiry produce
-notices. Group completion notices are proactive; private notices reply to the
-original request. Persist watches and notifications across process restarts.
+notices. Group completion notices follow the server's current route. Private
+notices reply to the original request. Persist watches and notifications across
+process restarts. A new restart uses the configured deadline when submitted.
+The poll interval applies when the monitor schedules its next sleep.
 
 ## Credentials and diagnosis
 

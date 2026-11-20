@@ -37,23 +37,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
-        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/metadata-action@v6
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
       - uses: docker/build-push-action@v7
         with:
-          push: ${{ startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push' }}
           load: true
           tags: |
             mc-admin-qqbot:qualified
@@ -65,6 +59,20 @@ jobs:
         run: |
           docker run --rm --entrypoint python mc-admin-qqbot:qualified -c \
             'import asyncio; from mc_admin_qqbot.database import Database; from mc_admin_qqbot.roster import render_player_list; db = Database("sqlite+aiosqlite:///./data/smoke.db", "smoke"); asyncio.run(db.initialize()); asyncio.run(db.close()); assert render_player_list("白名单", "smoke", ["Steve"]).startswith(b"\x89PNG")'
+      - uses: docker/login-action@v4
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish qualified image
+        if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r tag; do
+            docker push "$tag"
+          done <<< "$IMAGE_TAGS"
       - name: Bind qualification receipt to commit
         env:
           QUALIFIED_SHA: ${{ github.sha }}

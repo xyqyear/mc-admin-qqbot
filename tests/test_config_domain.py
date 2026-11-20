@@ -7,11 +7,11 @@ from mc_admin_qqbot.config import Settings
 from mc_admin_qqbot.domain import (
     UserInputError,
     format_server_list,
+    online_servers,
     parse_targeted_text,
     translate_action,
     translate_whitelist,
     validate_player_name,
-    visible_online_servers,
 )
 from mc_admin_qqbot.mcadmin import OnlinePlayer, ServerOverview
 
@@ -37,7 +37,6 @@ def server(
 def test_settings_validate_urls_database_and_defaults(tmp_path: Path) -> None:
     base = {
         "qq_app_id": "test-app",
-        "qq_group_openid": "test-group",
         "qq_app_secret": "secret",
         "_env_file": None,
         "mc_admin_base_url": "https://example.test/api/",
@@ -51,14 +50,10 @@ def test_settings_validate_urls_database_and_defaults(tmp_path: Path) -> None:
         Settings(**{**base, "mc_admin_base_url": "https://example.test/root"})
     with pytest.raises(ValidationError, match="Only sqlite"):
         Settings(**{**base, "database_url": "postgresql+asyncpg://localhost/db"})
-    with pytest.raises(ValidationError, match="cannot be excluded"):
-        Settings(**{**base, "default_server": "hidden", "excluded_servers": {"hidden"}})
     with pytest.raises(ValidationError, match="SQLite file"):
         Settings(**{**base, "database_url": "sqlite+aiosqlite:///:memory:"})
     with pytest.raises(ValidationError, match="query parameters"):
         Settings(**{**base, "database_url": "sqlite+aiosqlite:///bot.db?mode=ro"})
-    with pytest.raises(ValidationError, match="greater than 0"):
-        Settings(**{**base, "restart_timeout_seconds": 0})
 
 
 def test_visible_servers_and_list_format_are_stable() -> None:
@@ -67,26 +62,22 @@ def test_visible_servers_and_list_format_are_stable() -> None:
         server("busy", 25565, players=("Alice", "Bob")),
         server("starting", 25566, "STARTING"),
         server("offline", 25564, "CREATED"),
-        server("hidden", 25563),
     ]
-    assert [item.id for item in visible_online_servers(servers, {"hidden"})] == [
+    assert [item.id for item in online_servers(servers)] == [
         "busy",
         "starting",
         "empty",
     ]
-    assert format_server_list(servers, {"hidden"}) == (
+    assert format_server_list(servers) == (
         "[busy]：Alice、Bob\n没人：[empty]\n无响应：[starting]"
     )
-    assert format_server_list([server("off", 1, "CREATED")], set()) == (
-        "现在没有服务器在运行"
-    )
+    assert format_server_list([server("off", 1, "CREATED")]) == ("现在没有服务器在运行")
 
 
 def test_cli_settings_read_environment(monkeypatch, tmp_path):
     values = {
         "QQ_APP_ID": "environment-app",
         "QQ_APP_SECRET": "environment-secret",
-        "QQ_GROUP_OPENID": "environment-group",
         "MC_ADMIN_BASE_URL": "http://example.test/api",
         "MC_ADMIN_MASTER_TOKEN": "environment-master-token",
         "DATABASE_URL": f"sqlite+aiosqlite:///{tmp_path.as_posix()}/env.db",
@@ -100,38 +91,30 @@ def test_cli_settings_read_environment(monkeypatch, tmp_path):
 
 def test_target_selection_exact_prefix_default_and_safety() -> None:
     servers = [server("vanilla", 25565), server("vanish", 25566)]
-    exact = parse_targeted_text(
-        "hello /vanish", servers, set(), None, strict_selector=False
-    )
+    exact = parse_targeted_text("hello /vanish", servers, None, strict_selector=False)
     assert (exact.text, exact.server.id, exact.explicit) == ("hello", "vanish", True)
-    prefix = parse_targeted_text(
-        "hello /van", servers, set(), None, strict_selector=False
-    )
+    prefix = parse_targeted_text("hello /van", servers, None, strict_selector=False)
     assert prefix.server.id == "vanilla"
     unmatched_chat = parse_targeted_text(
-        "hello /missing", servers, set(), None, strict_selector=False
+        "hello /missing", servers, None, strict_selector=False
     )
     assert unmatched_chat.text == "hello /missing"
     assert unmatched_chat.server.id == "vanilla"
-    default = parse_targeted_text(
-        "hello", servers, set(), "vanish", strict_selector=False
-    )
+    default = parse_targeted_text("hello", servers, "vanish", strict_selector=False)
     assert default.server.id == "vanish"
-    selector_only = parse_targeted_text(
-        "/vanish", servers, set(), None, strict_selector=True
-    )
+    selector_only = parse_targeted_text("/vanish", servers, None, strict_selector=True)
     assert selector_only.text == ""
     with pytest.raises(UserInputError, match="找不到服务器"):
-        parse_targeted_text("/missing", servers, set(), None, strict_selector=True)
+        parse_targeted_text("/missing", servers, None, strict_selector=True)
     with pytest.raises(UserInputError, match="显式指定"):
         parse_targeted_text(
-            "", servers, set(), None, strict_selector=True, require_explicit=True
+            "", servers, None, strict_selector=True, require_explicit=True
         )
     with pytest.raises(UserInputError, match="默认服务器"):
-        parse_targeted_text("", servers, set(), "offline", strict_selector=True)
+        parse_targeted_text("", servers, "offline", strict_selector=True)
     with pytest.raises(UserInputError, match="没有可用"):
         parse_targeted_text(
-            "", [server("off", 1, "CREATED")], set(), None, strict_selector=True
+            "", [server("off", 1, "CREATED")], None, strict_selector=True
         )
 
 

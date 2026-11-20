@@ -68,14 +68,15 @@ async def test_relay_checkpoint_outbox_and_quote_survive_reopening(
     ],
 )
 async def test_delivery_failure_policy_and_safe_diagnostics(
-    database, qq, mc, channel, error, status
+    routed_database, qq, mc, channel, error, status
 ):
+    database = routed_database
     async with database.sessions.begin() as session:
         await database.enqueue(
             session,
             key="delivery",
             channel=channel,
-            destination="Steve",
+            destination="Steve" if channel == "game" else "test-group",
             body="hello",
             server_id="vanilla",
         )
@@ -142,7 +143,10 @@ async def make_watch(database, **overrides):
     return (await database.watches())[0]
 
 
-async def test_restart_requires_task_terminal_and_post_completion_health(database, mc):
+async def test_restart_requires_task_terminal_and_post_completion_health(
+    routed_database, mc
+):
+    database = routed_database
     watch = await make_watch(database)
     for state in ["pending", "running"]:
         mc.task.return_value = TaskState.model_validate({"status": state})
@@ -229,7 +233,7 @@ async def test_background_workers_cancel_and_close_cleanly(app, database, mc, qq
     mc.task.return_value = TaskState(status="running")
     stopped.clear()
     with patch("mc_admin_qqbot.workers.asyncio.sleep", side_effect=pause):
-        task = asyncio.create_task(watch_restarts(app.settings, database, mc))
+        task = asyncio.create_task(watch_restarts(database, mc))
         await asyncio.wait_for(stopped.wait(), 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):

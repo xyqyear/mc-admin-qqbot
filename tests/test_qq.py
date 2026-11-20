@@ -197,7 +197,11 @@ async def test_gateway_identify_heartbeat_resume_and_invalid_session(disconnect)
         assert not client.ready.is_set()
     assert identities[0] == {
         "op": 2,
-        "d": {"token": "QQBot test-token", "intents": 1 << 25, "shard": [0, 1]},
+        "d": {
+            "token": "QQBot test-token",
+            "intents": (1 << 25) | (1 << 26),
+            "shard": [0, 1],
+        },
     }
     assert identities[1]["op"] == (6 if disconnect == 7 else 2)
     if disconnect == 7:

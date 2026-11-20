@@ -22,7 +22,6 @@ async def bind_user(database, *, admin=False):
 async def test_list_aliases_and_unknown_commands(app, database, mc, command):
     await app.handle(make_event(command))
     assert (await database.pending())[-1].body == "没人：[vanilla]、[creative]"
-    assert mc.overview.call_args.args == ({"hidden"},)
     await app.handle(make_event("/unknown"))
     await app.handle(make_event("聊天不是命令"))
     assert len(await database.pending()) == 1
@@ -31,7 +30,10 @@ async def test_list_aliases_and_unknown_commands(app, database, mc, command):
 async def test_help_and_private_superuser_commands(app, database):
     await bind_user(database, admin=True)
     await app.handle(make_event("/help", private=True))
-    assert "/restart /<服务器>" in (await database.pending())[-1].body
+    help_text = (await database.pending())[-1].body
+    assert "/restart /<服务器>" in help_text
+    assert "/设置" in help_text
+    assert "/botname refresh" in help_text
 
 
 async def test_group_help_follows_role_in_current_message(app, database):
@@ -39,6 +41,7 @@ async def test_group_help_follows_role_in_current_message(app, database):
     owner_help = (await database.pending())[-1].body
     for command in ("/ban <", "/unban <", "/restart /", "/whitelist add/remove"):
         assert command in owner_help
+    assert "/设置" not in owner_help
 
     await app.handle(make_event("/help", role=None))
     member_help = (await database.pending())[-1].body
@@ -219,7 +222,7 @@ async def test_reference_routes_are_scoped_and_excluded_servers_stay_blocked(
             database.route_statement("group", "test-group", "ref", "hidden")
         )
     await app.handle(make_event("reply", ref="ref"))
-    assert "已被排除" in (await database.pending())[-1].body
+    assert "在本群不可用" in (await database.pending())[-1].body
     assert not mc.send_message.called
     assert await database.route_for(message(private=True, ref="ref")) is None
     await app.handle(make_event("/say hello", ref="missing"))

@@ -1,6 +1,6 @@
 # Behavior requirements
 
-Connect one configured official QQ group to multiple mc-admin servers. All game
+Connect official QQ groups to multiple mc-admin servers. All game
 interactions use mc-admin's authenticated API. User-facing text is Chinese.
 Player chat is text, never an RCON command.
 
@@ -15,8 +15,8 @@ Player chat is text, never an RCON command.
   enroll one superuser. Prior administrators remain authorized.
 - Privileged group commands require a superuser or owner/admin role in that
   actual message. Cached roles must never grant authority.
-- Ignore bots and other groups. Ordinary private users can submit a binding code
-  or claim token; private commands otherwise require superuser access.
+- Ignore chat from bots. Ordinary private users can submit a binding code or
+  claim token. Private commands require superuser access.
 
 ## Binding
 
@@ -38,7 +38,7 @@ The image shows an empty state when the server returns an empty list.
 
 Show management commands in /help only to callers authorized to run them.
 
-List online non-excluded servers in game-port order, distinguishing populated,
+List visible online servers in game-port order, distinguishing populated,
 empty and unresponsive servers. Fetch players only for healthy servers.
 Monitoring errors must not masquerade as an empty server list.
 
@@ -50,6 +50,18 @@ before forming fixed RCON commands.
 
 Relay prefixed game chat proactively. QQ quotes use the actual reference index
 to reach the original server. Require binding for explicit and quoted chat.
+Check the server's current route when handling quotes in a group.
+
+A server is visible to and relays into the same single group. The default group
+applies to servers without explicit rules. A rule can bind a server to a group
+or exclude it. Leaving a group suspends routes to it. Player binding remains
+available in Minecraft independently of QQ group routing.
+
+Superusers privately manage routing and restart timing through `/设置`.
+Settings cards show the page and breadcrumb. Group choices come from received
+group events. Refresh each group's name periodically on activity and preserve
+its last known name when the lookup fails. Persist settings in SQLite. Read the
+bot name at startup and on request.
 
 ## Persistence and lifecycle
 

@@ -200,7 +200,6 @@ async def test_superuser_claim_is_private_once_per_start_and_persisted(
 
 async def test_ignored_sources_duplicates_and_private_commands(app, database, mc):
     event = make_event("/list")
-    await app.handle(make_event("/list", group="other-group"))
     await app.handle(make_event("/list", bot=True))
     await app.handle(make_event("/list", private=True))
     assert not mc.overview.called
