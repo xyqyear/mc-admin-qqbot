@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from .config import Settings
 from .database import Database
 from .domain import (
+    ADMIN_HELP_TEXT,
     HELP_TEXT,
     UserInputError,
     format_server_list,
@@ -82,7 +83,7 @@ class Commands:
         log.info("command user=%s action=%s context=%s", user.id, action, message.scope)
         match action:
             case "help":
-                return HELP_TEXT
+                return f"{HELP_TEXT}\n\n{ADMIN_HELP_TEXT}" if admin else HELP_TEXT
             case "list":
                 return format_server_list(
                     await self.mc.overview(self.settings.excluded_servers),

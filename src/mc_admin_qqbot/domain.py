@@ -176,12 +176,15 @@ def _translate_banlist(output: str) -> list[str] | None:
     return names
 
 
-HELP_TEXT = """可用命令：
+HELP_TEXT = """可用命令
 /list（/ping、/l）查看服务器和玩家
 /say <消息> [/<服务器>]（/s）发送游戏消息，需要绑定
 /whitelist list [页码] [/<服务器>] 查看白名单
-/whitelist add/remove <玩家> [/<服务器>] 管理白名单（管理员）
-/ban、/unban <玩家> [/<服务器>] 管理封禁（管理员）
 /banlist [页码] [/<服务器>] 查看封禁列表
-/restart /<服务器> 重启服务器（管理员）
 服务器可使用完整 ID 或前缀指定。"""
+
+ADMIN_HELP_TEXT = """管理指令
+/whitelist add/remove <玩家> [/<服务器>] 管理白名单
+/ban <玩家> [/<服务器>] 封禁玩家
+/unban <玩家> [/<服务器>] 解除封禁
+/restart /<服务器> 重启服务器"""

@@ -44,13 +44,16 @@ message, including ordinary chat.
 | `/whitelist add/remove <player> [/<server>]` | Manage whitelist; admin only |
 | `/ban <player>`, `/unban <player>` | Manage bans; admin only |
 | `/restart /<server>` | Restart an explicitly selected server; admin only |
-| `/help` | Command help |
+| `/help` | Help for the commands available to the caller |
 
 Selectors match exact server IDs, then prefixes in game-port order. Without a
 selector, use the configured default or the first online server. Excluded
 servers cannot be selected. Current-message group owners/administrators and
 persisted superusers can manage servers. Private commands require superuser
 access; player confirmation and superuser claiming are open privately.
+
+QQ's native command panel is configured separately for the group. See
+[command panel setup](docs/qq-protocol.md#group-command-panel).
 
 Minecraft messages beginning with `\\` or `、、` are relayed proactively.
 Quoting a relay sends a bound user's reply to its original server. Long lists

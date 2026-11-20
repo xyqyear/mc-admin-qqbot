@@ -31,6 +31,20 @@ async def test_help_and_private_superuser_commands(app, database):
     assert "/restart /<服务器>" in (await database.pending())[-1].body
 
 
+async def test_group_help_follows_role_in_current_message(app, database):
+    await app.handle(make_event("/help", role="owner"))
+    owner_help = (await database.pending())[-1].body
+    for command in ("/ban <", "/unban <", "/restart /", "/whitelist add/remove"):
+        assert command in owner_help
+
+    await app.handle(make_event("/help", role=None))
+    member_help = (await database.pending())[-1].body
+    for command in ("/list", "/say", "/whitelist list", "/banlist"):
+        assert command in member_help
+    for command in ("/ban <", "/unban <", "/restart /", "/whitelist add/remove"):
+        assert command not in member_help
+
+
 @pytest.mark.parametrize(
     "command",
     [

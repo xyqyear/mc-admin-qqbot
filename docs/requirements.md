@@ -35,6 +35,8 @@ Preserve /list (/ping, /l), /say (/s), whitelist management, /ban, /unban, /banl
 /restart and /help. Mutations require admin access. Public lists show 20 player
 names per plain-text page with an explicit next-page command.
 
+Show management commands in /help only to callers authorized to run them.
+
 List online non-excluded servers in game-port order, distinguishing populated,
 empty and unresponsive servers. Fetch players only for healthy servers.
 Monitoring errors must not masquerade as an empty server list.

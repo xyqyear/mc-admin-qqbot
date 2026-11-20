@@ -99,6 +99,30 @@ The real message_scene.ext also contained an auth_token. It is deliberately
 omitted above and must not be logged or persisted. Other quote metadata included
 msg_elements and parallel_message.msg_nodes; neither is needed for routing.
 
+## Group command panel
+
+Use QQ's [create panel API](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_panels.post.html)
+with `scope: group`, `target_type: specific`, and the configured group in
+`group_openids`. Configure these items in order with `type: command`.
+
+| Name | Description | `only_admin` |
+| --- | --- | --- |
+| `list` | 查看在线服务器和玩家 | false |
+| `say` | 发消息到游戏，需绑定 | false |
+| `whitelist` | 白名单管理（list/add/remove） | false |
+| `banlist` | 查看封禁名单 | false |
+| `help` | 查看指令用法 | false |
+| `ban` | 封禁指定玩家 | true |
+| `unban` | 解除玩家封禁 | true |
+| `restart` | 重启指定服务器 | true |
+
+QQ returned the names without the slash and added it in the Windows client.
+The test-group owner reopened the conversation, opened the command panel from
+the toolbar, and selected `/help`. QQ filled `@罗伯特 /help`, and sending it
+returned help including the management section. Typing a slash alone did not
+open the panel in the tested Windows client. Member-side visibility was not
+tested on QQ. Command execution and help use the bot's own role check.
+
 ## Test limits
 
 The rewritten client was also connected to this real bot: /list received a real
