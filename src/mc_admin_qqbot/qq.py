@@ -20,6 +20,11 @@ GROUP_MESSAGE_EVENTS = {
 MESSAGE_EVENTS = {*GROUP_MESSAGE_EVENTS, "C2C_MESSAGE_CREATE"}
 
 
+def conversation_path(scope: Scope, destination: str) -> str:
+    kind = "groups" if scope == "group" else "users"
+    return f"/v2/{kind}/{quote(destination, safe='')}"
+
+
 class QQError(RuntimeError):
     def __init__(self, status: int, code: int = 0) -> None:
         self.status = status
@@ -162,8 +167,7 @@ class QQClient:
         msg_id: str | None = None,
         msg_seq: int = 1,
     ) -> SentMessage:
-        kind = "groups" if scope == "group" else "users"
-        endpoint = f"/v2/{kind}/{destination}"
+        endpoint = conversation_path(scope, destination)
         if isinstance(content, bytes):
             upload = await self.request(
                 "POST",
@@ -196,26 +200,28 @@ class QQClient:
         info = await self.request("GET", f"/v2/groups/{quote(openid, safe='')}/info")
         return info.get("group_name")
 
-    async def acknowledge(self, interaction_id: str, *, allowed: bool) -> None:
+    async def acknowledge(self, interaction_id: str, *, code: int = 0) -> None:
         await self.request(
             "PUT",
             f"/interactions/{quote(interaction_id, safe='')}",
-            {"code": 0 if allowed else 4},
+            {"code": code},
         )
 
     async def send_card(
         self,
-        openid: str,
+        scope: Scope,
+        destination: str,
         card: Card,
         *,
+        card_id: str,
         msg_id: str | None = None,
         event_id: str | None = None,
-    ) -> None:
+    ) -> SentMessage:
         rows = [
             {
                 "buttons": [
                     {
-                        "id": f"{row_index}-{button_index}",
+                        "id": f"{card_id}-{row_index}-{button_index}",
                         "render_data": {
                             "label": button.label,
                             "visited_label": button.label,
@@ -226,6 +232,7 @@ class QQClient:
                             "permission": {"type": 2},
                             "data": button.data,
                             "enter": False,
+                            **({"reply": True} if button.command else {}),
                             "unsupport_tips": "请使用支持消息按钮的 QQ 客户端",
                         },
                     }
@@ -241,9 +248,17 @@ class QQClient:
         }
         if event_id:
             body["event_id"] = event_id
-        else:
+        elif msg_id:
             body["msg_id"] = msg_id
-        await self.request("POST", f"/v2/users/{quote(openid, safe='')}/messages", body)
+        endpoint = conversation_path(scope, destination)
+        data = await self.request("POST", f"{endpoint}/messages", body)
+        return SentMessage(data["id"], data.get("ext_info", {}).get("ref_idx"))
+
+    async def recall(self, scope: Scope, destination: str, message_id: str) -> None:
+        endpoint = conversation_path(scope, destination)
+        await self.request(
+            "DELETE", f"{endpoint}/messages/{quote(message_id, safe='')}?hidetip=true"
+        )
 
     async def _heartbeat(
         self, ws: aiohttp.ClientWebSocketResponse, interval: float

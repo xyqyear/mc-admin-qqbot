@@ -17,6 +17,10 @@ Select a default group and any server-specific overrides to enable routing.
 After a leave event, a configured group stays visible as exited until it
 rejoins. Server routes to it are suspended.
 
+Select **默认服务器** in the private settings menu to set the server for
+unqualified commands. The selection is saved per AppID and takes effect on
+the next command. **自动选择** clears the selection.
+
 Docker stores data under ./data, writable by UID/GID 1000. Deploy the checkout
 with docker compose --env-file .env.bot up -d. Set NO_PROXY for a private
 mc-admin host if a proxy is configured.

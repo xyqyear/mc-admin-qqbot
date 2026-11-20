@@ -15,7 +15,6 @@ class Settings(BaseSettings):
     qq_app_secret: SecretStr = Field(min_length=1)
     mc_admin_base_url: HttpUrl
     mc_admin_master_token: SecretStr = Field(min_length=1)
-    default_server: str | None = None
     database_url: str = "sqlite+aiosqlite:///./data/official-bot.db"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 

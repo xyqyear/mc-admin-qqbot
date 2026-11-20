@@ -134,6 +134,9 @@ Private messages accepted `msg_type: 2` with `markdown.content` and
 `keyboard.content.rows` containing custom buttons. The tested Windows client
 showed callback buttons below the text. A type 2 command button with
 `enter: false` prefilled the custom setting command in the input box.
+Adding `reply: true` showed a quote in the composer. Submitting the command
+produced a C2C_MESSAGE_CREATE with `message_type: 103` and a `ref_msg_idx`
+matching the sent card's `ext_info.ref_idx`.
 
 Type 1 buttons arrived through INTERACTION_CREATE. The private interaction
 carried `d.user_openid` and `d.data.resolved.button_data`. PUT
@@ -141,6 +144,15 @@ carried `d.user_openid` and `d.data.resolved.button_data`. PUT
 The bot sent the next card using the interaction's event ID after acknowledging
 it. Subpages limit the keyboard to five rows.
 [Official QQ message button protocol](https://github.com/tencent-connect/bot-docs/blob/main/docs/develop/api-v2/server-inter/message/trans/msg-btn.md).
+
+## Recall button cards
+
+The test bot recalled its own Markdown button card in both a private chat
+and the test QQ group. DELETE `/v2/users/{openid}/messages/{message_id}` and
+DELETE `/v2/groups/{group_openid}/messages/{message_id}` both returned 200.
+The sending response's `id` identifies the message to recall. The bot was an
+ordinary member of the test group. Windows QQ displayed a recall notice with
+`hidetip=true`.
 
 ## Player list images
 

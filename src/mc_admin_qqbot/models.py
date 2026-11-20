@@ -83,6 +83,13 @@ class BotPreferences(Base):
     restart_poll_interval_seconds: Mapped[int] = mapped_column(default=5)
 
 
+class BotDefaultServer(Base):
+    __tablename__ = "bot_default_server"
+
+    app_id: Mapped[str] = mapped_column(String, primary_key=True)
+    server_id: Mapped[str] = mapped_column(String)
+
+
 class ServerGroupRule(Base):
     __tablename__ = "server_group_rule"
 

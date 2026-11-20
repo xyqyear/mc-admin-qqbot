@@ -2,13 +2,14 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .models import (
     Base,
+    BotDefaultServer,
     BotPreferences,
     EventCheckpoint,
     GroupMember,
@@ -69,6 +70,26 @@ class Database:
         preferences = await session.get(BotPreferences, self.app_id)
         assert preferences is not None
         return preferences
+
+    async def default_server(self, session: AsyncSession) -> str | None:
+        return await session.scalar(
+            select(BotDefaultServer.server_id).where(
+                BotDefaultServer.app_id == self.app_id
+            )
+        )
+
+    async def save_default_server(self, server_id: str | None) -> None:
+        async with self.sessions.begin() as session:
+            if server_id is None:
+                await session.execute(
+                    delete(BotDefaultServer).where(
+                        BotDefaultServer.app_id == self.app_id
+                    )
+                )
+            else:
+                await session.merge(
+                    BotDefaultServer(app_id=self.app_id, server_id=server_id)
+                )
 
     async def group_routes(self, session: AsyncSession) -> GroupRoutes:
         preferences = await self.preferences(session)

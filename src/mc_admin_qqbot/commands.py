@@ -6,7 +6,6 @@ from datetime import timedelta
 from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
-from .config import Settings
 from .database import Database
 from .domain import (
     ADMIN_HELP_TEXT,
@@ -30,10 +29,7 @@ COMMANDS = {"help", "list", "say", "whitelist", "ban", "unban", "banlist", "rest
 
 
 class Commands:
-    def __init__(
-        self, settings: Settings, database: Database, mc: McAdminClient
-    ) -> None:
-        self.settings = settings
+    def __init__(self, database: Database, mc: McAdminClient) -> None:
         self.database = database
         self.mc = mc
 
@@ -48,7 +44,8 @@ class Commands:
         self, message: QQMessage, raw: str, *, chat: bool = False, restart: bool = False
     ):
         visible = await self.visibility(message)
-        default = self.settings.default_server
+        async with self.database.sessions() as session:
+            default = await self.database.default_server(session)
         return parse_targeted_text(
             raw,
             await self.mc.overview(visible),

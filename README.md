@@ -36,6 +36,10 @@ return a server to default routing. Clearing the default suspends unassigned
 servers. Leaving a group suspends any routes to it until it rejoins or a
 superuser changes the routes.
 
+Open **默认服务器** to choose a server for commands without a selector. The
+selection is saved in SQLite and applies immediately. **自动选择** uses the
+first visible online server in game-port order.
+
 Open **系统设置** to edit the restart deadline and status poll interval, with
 defaults of 10 minutes and 5 seconds. The bot reads its display name on startup.
 Use **刷新机器人名** or `/botname refresh` to fetch it again.
@@ -65,11 +69,12 @@ message, including ordinary chat.
 | `/help` | Help for the commands available to the caller |
 
 Selectors match exact server IDs, then prefixes in game-port order. The
-configured default applies in groups that can see it. Otherwise the first
-available online server is selected. Current-message group owners or
-administrators and persisted superusers can manage visible servers. Private
-commands require superuser access. Player confirmation and superuser claiming
-are open privately.
+configured default applies in private and in groups that can see it. If that
+server is offline, the reply asks for an explicit selector. Groups without
+access to the default use the first visible online server. Owners and
+administrators identified by the current group message can manage visible
+servers, as can persisted superusers. Private commands require superuser
+access. Player confirmation and superuser claiming are open privately.
 
 QQ's native command panel is configured separately for the group. See
 [command panel setup](docs/qq-protocol.md#group-command-panel).
@@ -86,7 +91,6 @@ Settings use the MC_ADMIN_QQBOT_ prefix, from environment variables or .env.bot.
 | QQ_APP_ID, QQ_APP_SECRET | Required official bot credentials |
 | MC_ADMIN_BASE_URL | Required URL ending in /api |
 | MC_ADMIN_MASTER_TOKEN | Required mc-admin bearer token |
-| DEFAULT_SERVER | Optional server ID |
 | DATABASE_URL | sqlite+aiosqlite:///./data/official-bot.db |
 | LOG_LEVEL | INFO |
 

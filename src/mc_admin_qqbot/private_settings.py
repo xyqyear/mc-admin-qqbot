@@ -15,7 +15,9 @@ from .qq import Button, Card, QQClient, QQError
 
 CALLBACK_PREFIX = "settings:"
 PAGE_SIZE = 4
-SETTINGS_HELP = "/设置 管理服务器群组和系统设置\n/botname refresh 刷新机器人名"
+SETTINGS_HELP = (
+    "/设置 管理服务器群组、默认服务器和系统设置\n/botname refresh 刷新机器人名"
+)
 
 
 @dataclass(frozen=True)
@@ -136,8 +138,7 @@ class PrivateSettings:
             if args[0] == option.label:
                 if len(args) == 1:
                     return await self.system(key)
-                if len(args) == 2:
-                    return await self.save_option(key, args[1])
+                return await self.save_option(key, " ".join(args[1:]))
         raise UserInputError("请发送 /设置 打开设置页")
 
     async def click(self, action: list[str]) -> Card:
@@ -148,6 +149,10 @@ class PrivateSettings:
                 return await self.home(await self.refresh_bot_name())
             case ["servers", page]:
                 return await self.servers(page)
+            case ["default", page]:
+                return await self.default_server(page)
+            case ["choose-default", server, page]:
+                return await self.save_default_server(server, page)
             case ["choose", server, server_page, page]:
                 return await self.groups(server, page, server_page)
             case ["bind", server, group, page]:
@@ -166,6 +171,7 @@ class PrivateSettings:
     async def home(self, notice: str = "") -> Card:
         async with self.database.sessions() as session:
             routes = await self.database.group_routes(session)
+            default_server = await self.database.default_server(session)
         return card(
             "机器人设置",
             [
@@ -174,14 +180,66 @@ class PrivateSettings:
                     button("设置默认群", "choose", "", "0", "0"),
                 ],
                 [
+                    button("默认服务器", "default", "0"),
                     button("系统设置", "system"),
-                    button("刷新机器人名", "refresh"),
                 ],
+                [button("刷新机器人名", "refresh")],
             ],
             f"默认群 ｜ {markdown_text(group_label(routes, routes.fallback))}",
+            f"默认服务器 ｜ {markdown_text(default_server or '自动选择')}",
             f"机器人名 ｜ {markdown_text(self.bindings.bot_name)}",
             notice=notice,
         )
+
+    async def default_server(
+        self, page: str, notice: str = "", metadata: list[ServerMetadata] | None = None
+    ) -> Card:
+        if metadata is None:
+            metadata = await self.mc.servers()
+        async with self.database.sessions() as session:
+            default = await self.database.default_server(session)
+        items, index, nav = page_items(
+            sorted(metadata, key=lambda server: (server.game_port, server.id)),
+            page,
+            "default",
+        )
+        rows = [
+            [
+                button(
+                    f"✓ {server.id}" if server.id == default else server.id,
+                    "choose-default",
+                    server.id,
+                    page,
+                    primary=server.id == default,
+                )
+            ]
+            for server in items
+        ]
+        rows.append(
+            [
+                button("自动选择", "choose-default", "", page, primary=default is None),
+                button("返回设置", "home"),
+                *nav,
+            ]
+        )
+        return card(
+            f"默认服务器 {index}" if nav else "默认服务器",
+            rows,
+            f"当前 ｜ {markdown_text(default or '自动选择')}",
+            "" if items else "暂无服务器",
+            path=("默认服务器",),
+            notice=notice,
+        )
+
+    async def save_default_server(self, server: str, page: str) -> Card:
+        metadata = await self.mc.servers()
+        if server and all(item.id != server for item in metadata):
+            return await self.default_server(
+                page, "服务器已不存在，请重新选择", metadata
+            )
+        await self.database.save_default_server(server or None)
+        label = markdown_text(server or "自动选择")
+        return await self.default_server(page, f"已更新默认服务器 · {label}", metadata)
 
     async def servers(
         self,

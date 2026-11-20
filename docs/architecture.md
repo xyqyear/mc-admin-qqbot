@@ -11,6 +11,7 @@ refresh.
 | application.py | Startup, profile refresh, private enrollment, dispatch, lifecycle |
 | commands.py, domain.py, roster.py | QQ commands, permissions, targeting, roster rendering |
 | private_settings.py | Private superuser settings cards and actions |
+| cards.py | Active card references and send-before-recall sequencing in QQ conversations |
 | binding.py, relay.py | Game initiation, confirmation, atomic game-event handling |
 | models.py, database.py | Profiles, group directory, settings, outbox, routes, cursor, restart watches |
 | workers.py | Delivery retry, reconnect and restart completion |
@@ -47,6 +48,12 @@ Group routing resolves a server's explicit rule before consulting the default.
 An explicit empty rule means exclusion. A missing rule uses the default. The
 group must be marked joined to receive messages or see the server. Delivery
 resolves the current destination again before a proactive send.
+
+Card buttons carry a card ID. Card state keeps the sending conversation,
+returned message ID and any command prefixes. Native prefill buttons attach a
+quote. The submitted command resolves that quote in the same conversation.
+Active cards live in memory. Replacement sends the new card first and
+consumes the reference before attempting to recall the original.
 
 ## Protocol evidence
 

@@ -3,9 +3,10 @@ import asyncio
 import aiohttp
 import pytest
 from aiohttp import web
-from conftest import make_event, serve
+from conftest import make_event, message, serve
 
-from mc_admin_qqbot.qq import QQClient, QQError, QQMessage
+from mc_admin_qqbot.cards import Cards
+from mc_admin_qqbot.qq import Button, Card, QQClient, QQError, QQMessage
 
 
 def test_actual_group_quote_shape_and_private_identity():
@@ -86,6 +87,74 @@ async def test_official_http_active_passive_replies_and_token_refresh():
             },
         ),
     ]
+
+
+@pytest.mark.parametrize(
+    ("scope", "destination", "kind", "status"),
+    [("private", "user-one", "users", 204), ("group", "test-group", "groups", 200)],
+)
+async def test_button_cards_are_recalled_in_their_original_conversation(
+    scope, destination, kind, status
+):
+    posts, deletions = [], []
+
+    async def token(_):
+        return web.json_response({"access_token": "test-token", "expires_in": 7200})
+
+    async def post(request):
+        posts.append((request.path, await request.json()))
+        return web.json_response(
+            {
+                "id": f"ROBOT1.0_{len(posts)}",
+                "ext_info": {"ref_idx": f"REFIDX_{len(posts)}"},
+            }
+        )
+
+    async def recall(request):
+        deletions.append((request.path, request.query["hidetip"], len(posts)))
+        return web.Response(status=204) if status == 204 else web.json_response({})
+
+    app = web.Application()
+    app.router.add_post("/token", token)
+    app.router.add_post("/v2/{kind}/{target}/messages", post)
+    app.router.add_delete("/v2/{kind}/{target}/messages/{id}", recall)
+    async with serve(app) as url, aiohttp.ClientSession() as http:
+        client = QQClient(http, "app", "secret", api_url=url, token_url=url + "/token")
+        cards = Cards(client)
+        card = Card(
+            "设置", [[Button("继续", "next"), Button("自定义", "/test ", command=True)]]
+        )
+        await cards.send(scope, destination, card, msg_id="incoming")
+        path, payload = posts[0]
+        assert path == f"/v2/{kind}/{destination}/messages"
+        assert payload["msg_type"] == 2
+        assert payload["msg_id"] == "incoming"
+        callback, custom = payload["keyboard"]["content"]["rows"][0]["buttons"]
+        assert callback["action"]["type"] == 1
+        assert custom["action"]["type"] == 2
+        assert custom["action"]["data"] == "/test "
+        assert custom["action"]["reply"] is True
+        assert custom["action"]["enter"] is False
+        assert deletions == []
+
+        source = cards.clicked(scope, destination, callback["id"])
+        assert source is not None
+        assert cards.clicked(scope, "different-conversation", callback["id"]) is None
+        quoted = message("/test 7", private=scope == "private", ref="REFIDX_1")
+        assert cards.submitted(quoted) == source
+        other = message("/test 7", private=scope != "private", ref="REFIDX_1")
+        assert cards.submitted(other) is None
+        await cards.send(
+            scope,
+            destination,
+            Card("下一页", [[Button("返回", "back")]]),
+            event_id="button-event",
+            replace=source,
+        )
+        assert posts[-1][0] == path
+        assert posts[-1][1]["event_id"] == "button-event"
+        assert deletions == [(f"{path}/ROBOT1.0_1", "true", 2)]
+        assert cards.clicked(scope, destination, callback["id"]) is None
 
 
 @pytest.mark.parametrize(

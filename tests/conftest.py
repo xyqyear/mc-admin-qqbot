@@ -71,7 +71,11 @@ def message(text: str = "", **kwargs: Any) -> QQMessage:
 
 
 def interaction(
-    action: list[str] | str, *, openid: str = "user-one", group: str | None = None
+    action: list[str] | str,
+    *,
+    button_id: str = "unknown-0-0",
+    openid: str = "user-one",
+    group: str | None = None,
 ) -> dict[str, Any]:
     number = next(ids)
     button_data = (
@@ -86,9 +90,12 @@ def interaction(
             "type": 11,
             "scene": "group" if group else "c2c",
             "chat_type": 1 if group else 2,
-            "user_openid": openid,
-            **({"group_openid": group} if group else {}),
-            "data": {"resolved": {"button_id": "0-0", "button_data": button_data}},
+            **(
+                {"group_openid": group, "group_member_openid": openid}
+                if group
+                else {"user_openid": openid}
+            ),
+            "data": {"resolved": {"button_id": button_id, "button_data": button_data}},
         },
     }
 
@@ -180,11 +187,14 @@ def mc() -> AsyncMock:
 def qq() -> AsyncMock:
     client = AsyncMock(spec=QQClient)
     client.send.return_value = SentMessage("sent-id", "REFIDX_sent")
+    client.send_card.side_effect = lambda *_, card_id, **__: SentMessage(
+        f"sent-{card_id}", f"REFIDX_{card_id}"
+    )
     client.bot_name.return_value = "罗伯特"
     client.group_name.return_value = "测试群"
     return client
 
 
 @pytest.fixture
-def app(settings: Settings, routed_database: Database, mc: AsyncMock, qq: AsyncMock):
-    return Application(settings, routed_database, qq, mc)
+def app(routed_database: Database, mc: AsyncMock, qq: AsyncMock):
+    return Application(routed_database, qq, mc)

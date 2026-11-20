@@ -42,8 +42,10 @@ List visible online servers in game-port order, distinguishing populated,
 empty and unresponsive servers. Fetch players only for healthy servers.
 Monitoring errors must not masquerade as an empty server list.
 
-Per-server commands accept a final /<id-or-prefix>; exact matches win before
-prefixes. No selector uses the configured default or first online server.
+Per-server commands accept a final /<id-or-prefix>. Exact matches win before
+prefixes. With no selector, use the configured default if visible. Report
+unavailability when the visible default is offline. Automatic selection and
+groups without access to the default use the first visible online server.
 Unmatched administrative selectors fail. Chat may retain unmatched selectors as
 literal text. Restart always needs an explicit selector. Validate player names
 before forming fixed RCON commands.
@@ -57,11 +59,17 @@ applies to servers without explicit rules. A rule can bind a server to a group
 or exclude it. Leaving a group suspends routes to it. Player binding remains
 available in Minecraft independently of QQ group routing.
 
-Superusers privately manage routing and restart timing through `/设置`.
+Superusers privately manage routing, the default server and restart timing
+through `/设置`.
 Settings cards show the page and breadcrumb. Group choices come from received
 group events. Refresh each group's name periodically on activity and preserve
 its last known name when the lookup fails. Persist settings in SQLite. Read the
 bot name at startup and on request.
+
+Send a replacement card before recalling its source in the same conversation.
+Apply the callback once per card. A custom button fills the input box and
+includes a quote of its source. Replace the source when the submitted command
+receives a new card, including a card showing input validation errors.
 
 ## Persistence and lifecycle
 

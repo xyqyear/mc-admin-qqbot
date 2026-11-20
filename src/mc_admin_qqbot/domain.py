@@ -66,7 +66,9 @@ def parse_targeted_text(
             None,
         )
         if server is None:
-            raise UserInputError(f"默认服务器 [{default_server}] 当前不可用")
+            raise UserInputError(
+                f"默认服务器 [{default_server}] 当前不可用，请在命令末尾指定 /服务器"
+            )
     else:
         server = available[0]
     return TargetedText(text, server, False)

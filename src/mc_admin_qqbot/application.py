@@ -6,8 +6,8 @@ import time
 import aiohttp
 
 from .binding import CODE_RE, Bindings
+from .cards import Cards
 from .commands import Commands
-from .config import Settings
 from .database import Database
 from .domain import UserInputError
 from .mcadmin import McAdminClient, McAdminError
@@ -23,7 +23,6 @@ log = logging.getLogger(__name__)
 class Application:
     def __init__(
         self,
-        settings: Settings,
         database: Database,
         qq: QQClient,
         mc: McAdminClient,
@@ -31,8 +30,9 @@ class Application:
         self.database = database
         self.qq = qq
         self.mc = mc
+        self.cards = Cards(qq)
         self.bindings = Bindings(database)
-        self.commands = Commands(settings, database, mc)
+        self.commands = Commands(database, mc)
         self.private_settings = PrivateSettings(database, qq, mc, self.bindings)
         self.relay = GameRelay(database, self.bindings)
         self.claim_token: str | None = None
@@ -109,8 +109,12 @@ class Application:
                     if message.content:
                         card = await self.private_settings.command(message.content)
                         if card is not None:
-                            await self.qq.send_card(
-                                message.openid, card, msg_id=message.id
+                            await self.cards.send(
+                                message.scope,
+                                message.destination,
+                                card,
+                                msg_id=message.id,
+                                replace=self.cards.submitted(message),
                             )
                             return
                     response = await self.commands.handle(message, user)
@@ -136,7 +140,8 @@ class Application:
 
     async def handle_interaction(self, event: dict) -> None:
         data = event["d"]
-        target = data.get("data", {}).get("resolved", {}).get("button_data", "")
+        resolved = data.get("data", {}).get("resolved", {})
+        target = resolved.get("button_data", "")
         if not isinstance(target, str) or not target.startswith(CALLBACK_PREFIX):
             return
         interaction_id = data["id"]
@@ -152,9 +157,16 @@ class Application:
             and await self.database.is_superuser(openid)
         )
         try:
-            await self.qq.acknowledge(interaction_id, allowed=allowed)
             if not allowed:
+                await self.qq.acknowledge(interaction_id, code=4)
                 return
+            source = self.cards.clicked(
+                "private", openid, resolved.get("button_id") or ""
+            )
+            if source is None:
+                await self.qq.acknowledge(interaction_id, code=3)
+                return
+            await self.qq.acknowledge(interaction_id)
             try:
                 card = await self.private_settings.click(action)
             except UserInputError as exc:
@@ -163,8 +175,12 @@ class Application:
                 card = await self.private_settings.home(
                     "mc-admin 暂时不可用，请稍后再试"
                 )
-            await self.qq.send_card(
-                openid, card, event_id=event.get("id") or interaction_id
+            await self.cards.send(
+                source.scope,
+                source.destination,
+                card,
+                event_id=event.get("id") or interaction_id,
+                replace=source,
             )
         except (QQError, aiohttp.ClientError, TimeoutError):
             log.warning("settings interaction failed")

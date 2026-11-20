@@ -25,7 +25,7 @@ async def run(settings: Settings) -> None:
                 settings.mc_admin_api_url,
                 settings.mc_admin_master_token.get_secret_value(),
             )
-            await Application(settings, database, qq, mc).run()
+            await Application(database, qq, mc).run()
     finally:
         await database.close()
 

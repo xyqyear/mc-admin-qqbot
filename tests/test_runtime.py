@@ -25,14 +25,13 @@ async def eventually(check):
             await asyncio.sleep(0.01)
 
 
-async def test_application_end_to_end_with_real_http_websockets_and_database(
-    settings, database
-):
+async def test_application_end_to_end_with_real_http_websockets_and_database(database):
     qq_events = asyncio.Queue()
     game_events = asyncio.Queue()
     qq_posts = []
     qq_uploads = []
     acknowledgments = []
+    recalls = []
     game_posts = []
     operations = []
     task_state = "running"
@@ -99,6 +98,17 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
         acknowledgments.append((request.match_info["id"], await request.json()))
         return web.Response()
 
+    async def recall(request):
+        recalls.append(
+            (
+                request.match_info["target"],
+                request.match_info["id"],
+                len([post for post in qq_posts if post["msg_type"] == 2]),
+            )
+        )
+        assert request.query.get("hidetip") == "true"
+        return web.json_response({})
+
     async def self_info(_):
         return web.json_response({"username": "罗伯特"})
 
@@ -160,18 +170,18 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
     server.router.add_put("/interactions/{id}", acknowledge)
     server.router.add_get("/api/events", game_socket)
     server.router.add_post("/v2/{kind}/{target}/messages", handle_qq)
+    server.router.add_delete("/v2/users/{target}/messages/{id}", recall)
     server.router.add_post("/v2/groups/test-group/files", upload_image)
     server.router.add_route("*", "/api/{tail:.*}", handle_mc)
     async with database.sessions.begin() as session:
         preferences = await database.preferences(session)
         preferences.restart_poll_interval_seconds = 1
     async with serve(server) as url, aiohttp.ClientSession() as http:
-        settings.mc_admin_base_url = url + "/api"
         qq = QQClient(
             http, "test-app", "test-secret", api_url=url, token_url=url + "/token"
         )
         mc = McAdminClient(http, url + "/api", "test-master-token")
-        app = Application(settings, database, qq, mc)
+        app = Application(database, qq, mc)
         running = asyncio.create_task(app.run())
         try:
             await asyncio.wait_for(qq.ready.wait(), 2)
@@ -209,7 +219,9 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
             default_button = root["keyboard"]["content"]["rows"][0]["buttons"][1]
             assert default_button["render_data"]["label"] == "设置默认群"
             assert default_button["action"]["type"] == 1
-            choose_event = interaction(default_button["action"]["data"])
+            choose_event = interaction(
+                default_button["action"]["data"], button_id=default_button["id"]
+            )
             await qq_events.put(choose_event)
             await eventually(lambda: settings_card(1))
             groups = await settings_card(1)
@@ -218,7 +230,9 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
             assert "设置 › 默认群" in groups["markdown"]["content"]
             group_button = groups["keyboard"]["content"]["rows"][0]["buttons"][0]
             assert group_button["render_data"]["label"] == "机器人测试群"
-            bind_event = interaction(group_button["action"]["data"])
+            bind_event = interaction(
+                group_button["action"]["data"], button_id=group_button["id"]
+            )
             await qq_events.put(bind_event)
             await eventually(lambda: settings_card(2))
             confirmation = await settings_card(2)
@@ -227,6 +241,15 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
             assert acknowledgments == [
                 (choose_event["d"]["id"], {"code": 0}),
                 (bind_event["d"]["id"], {"code": 0}),
+            ]
+
+            async def cards_recalled():
+                return len(recalls) == 2
+
+            await eventually(cards_recalled)
+            assert recalls == [
+                ("user-one", f"ROBOT1.0_{qq_posts.index(root) + 1}", 2),
+                ("user-one", f"ROBOT1.0_{qq_posts.index(groups) + 1}", 3),
             ]
             await game_events.put(chat("、、bind").model_dump(mode="json"))
 

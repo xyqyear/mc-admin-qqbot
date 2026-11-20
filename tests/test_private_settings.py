@@ -6,7 +6,13 @@ import pytest
 from conftest import chat, interaction, make_event, server
 
 from mc_admin_qqbot.mcadmin import McAdminUnavailable, TaskState
-from mc_admin_qqbot.models import OutboundDelivery, QQGroup, User, utc_now
+from mc_admin_qqbot.models import (
+    OutboundDelivery,
+    QQGroup,
+    ServerGroupRule,
+    User,
+    utc_now,
+)
 from mc_admin_qqbot.qq import QQError
 from mc_admin_qqbot.workers import check_restart, deliver
 
@@ -17,14 +23,23 @@ async def enroll(app):
 
 
 def sent_card(qq):
-    return qq.send_card.call_args.args[1]
+    return qq.send_card.call_args.args[2]
+
+
+def card_id(qq):
+    return qq.send_card.call_args.kwargs["card_id"]
+
+
+def card_click(qq, action, **kwargs):
+    return interaction(action, button_id=f"{card_id(qq)}-0-0", **kwargs)
 
 
 async def press(app, qq, label, *, row=None):
     rows = sent_card(qq).rows
     buttons = rows[row] if row is not None else [item for line in rows for item in line]
     chosen = next(item for item in buttons if item.label == label)
-    await app.handle(interaction(chosen.data))
+    assert not chosen.command
+    await app.handle(card_click(qq, chosen.data))
     return sent_card(qq)
 
 
@@ -43,23 +58,23 @@ async def test_settings_require_current_private_superuser_permission(app, databa
     home = sent_card(qq)
     assert "机器人设置" in home.markdown
     assert "默认群 ｜ 测试群" in home.markdown
-    click = interaction(home.rows[1][0].data)
+    click = card_click(qq, home.rows[1][1].data)
     await app.handle(click)
     assert sent_card(qq).markdown.startswith("设置 › 系统设置")
     await app.handle(click)
-    qq.acknowledge.assert_awaited_once_with(click["d"]["id"], allowed=True)
+    qq.acknowledge.assert_awaited_once_with(click["d"]["id"])
 
     for denied in (
-        interaction(["save", "timeout", "20"], openid="another-user"),
-        interaction(["save", "timeout", "20"], group="test-group"),
-        interaction("settings:{"),
-        interaction('settings:{"action":"save"}'),
+        card_click(qq, ["save", "timeout", "20"], openid="another-user"),
+        card_click(qq, ["save", "timeout", "20"], group="test-group"),
+        card_click(qq, "settings:{"),
+        card_click(qq, 'settings:{"action":"save"}'),
     ):
         await app.handle(denied)
-        qq.acknowledge.assert_awaited_with(denied["d"]["id"], allowed=False)
-    await app.handle(interaction(["unknown"]))
+        qq.acknowledge.assert_awaited_with(denied["d"]["id"], code=4)
+    await app.handle(card_click(qq, ["unknown"]))
     assert "此按钮已失效" in sent_card(qq).markdown
-    await app.handle(interaction(["servers", "invalid-page"]))
+    await app.handle(card_click(qq, ["servers", "invalid-page"]))
     assert "此按钮已失效" in sent_card(qq).markdown
     count = qq.acknowledge.await_count
     await app.handle(interaction("unrelated menu event"))
@@ -68,9 +83,9 @@ async def test_settings_require_current_private_superuser_permission(app, databa
     async with database.sessions.begin() as session:
         user = await session.get(User, 1)
         user.is_superuser = False
-    denied = interaction(["save", "timeout", "20"])
+    denied = card_click(qq, ["save", "timeout", "20"])
     await app.handle(denied)
-    qq.acknowledge.assert_awaited_with(denied["d"]["id"], allowed=False)
+    qq.acknowledge.assert_awaited_with(denied["d"]["id"], code=4)
     async with database.sessions() as session:
         assert (await database.preferences(session)).restart_timeout_seconds == 600
 
@@ -194,7 +209,7 @@ async def test_group_events_refresh_names_and_leave_suspends_routes(
             )
             await press(app, qq, "vanilla · 改绑")
             assert "新群名" not in sent_card(qq).markdown
-            await app.handle(interaction(["bind", "vanilla", "secondary", "0"]))
+            await app.handle(card_click(qq, ["bind", "vanilla", "secondary", "0"]))
             assert "机器人已不在该群" in sent_card(qq).markdown
 
             await app.handle(make_event("重新入群后的消息", group="secondary"))
@@ -283,7 +298,7 @@ async def test_card_rows_keep_context_when_paging_servers_and_groups(
     mc.servers.return_value = []
     await press(app, qq, "返回设置")
     assert "暂无服务器" in (await press(app, qq, "服务器群组")).markdown
-    await app.handle(interaction(["exclude", "survival4", "1"]))
+    await app.handle(card_click(qq, ["exclude", "survival4", "1"]))
     assert "服务器已不存在" in sent_card(qq).markdown
     await press(app, qq, "设置默认群")
     assert "已清除默认群" in (await press(app, qq, "清除默认群")).markdown
@@ -297,15 +312,146 @@ async def test_settings_errors_keep_interaction_and_reply_paths_available(
     app, database, qq, mc
 ):
     await enroll(app)
+    send_card = qq.send_card.side_effect
     qq.send_card.side_effect = QQError(403)
     await app.handle(make_event("/设置", private=True))
     assert "设置卡片暂时无法显示" in (await database.pending())[-1].body
-    qq.send_card.side_effect = None
+    qq.send_card.side_effect = send_card
+    await app.handle(make_event("/设置", private=True))
     qq.acknowledge.side_effect = QQError(500)
-    await app.handle(interaction(["save", "timeout", "20"]))
+    await app.handle(card_click(qq, ["save", "timeout", "20"]))
     async with database.sessions() as session:
         assert (await database.preferences(session)).restart_timeout_seconds == 600
     qq.acknowledge.side_effect = None
     mc.servers.side_effect = McAdminUnavailable("private detail")
-    await app.handle(interaction(["servers", "0"]))
+    await app.handle(card_click(qq, ["servers", "0"]))
     assert "mc-admin 暂时不可用" in sent_card(qq).markdown
+
+
+async def test_default_server_persists_and_respects_group_routing(
+    app, database, qq, mc
+):
+    await enroll(app)
+    mc.banned_players.return_value = []
+    await app.handle(make_event("/设置", private=True))
+    assert "默认服务器 ｜ 自动选择" in sent_card(qq).markdown
+    picker = await press(app, qq, "默认服务器")
+    assert picker.markdown.startswith("设置 › 默认服务器")
+    chosen = await press(app, qq, "creative")
+    assert "已更新默认服务器 · creative" in chosen.markdown
+    assert any(item.label == "✓ creative" for row in chosen.rows for item in row)
+
+    await database.close()
+    await database.initialize()
+    await app.handle(make_event("/banlist"))
+    mc.banned_players.assert_awaited_with("creative")
+    await app.handle(make_event("/banlist /vanilla"))
+    mc.banned_players.assert_awaited_with("vanilla")
+
+    creative = server("creative", 25566)
+    creative.status = "CREATED"
+    mc.overview.side_effect = lambda visible: [
+        item for item in (server(), creative) if visible(item.id)
+    ]
+    mc.banned_players.reset_mock()
+    await app.handle(make_event("/banlist"))
+    mc.banned_players.assert_not_awaited()
+    assert (await database.pending())[-1].body == (
+        "默认服务器 [creative] 当前不可用，请在命令末尾指定 /服务器"
+    )
+    creative.status = "HEALTHY"
+
+    await app.handle(group_event("creative-group", group_name="创造服"))
+    async with database.sessions.begin() as session:
+        session.add(
+            ServerGroupRule(
+                app_id=database.app_id,
+                server_id="creative",
+                group_openid="creative-group",
+            )
+        )
+    await app.handle(make_event("/banlist"))
+    mc.banned_players.assert_awaited_with("vanilla")
+    await app.handle(make_event("/banlist", group="creative-group"))
+    mc.banned_players.assert_awaited_with("creative")
+    await app.handle(make_event("/banlist", private=True))
+    mc.banned_players.assert_awaited_with("creative")
+
+    await press(app, qq, "自动选择")
+    await press(app, qq, "返回设置")
+    assert "默认服务器 ｜ 自动选择" in sent_card(qq).markdown
+    await app.handle(make_event("/banlist", private=True))
+    mc.banned_players.assert_awaited_with("vanilla")
+
+
+async def test_default_server_paging_and_removed_server(app, qq, mc):
+    await enroll(app)
+    mc.servers.return_value = [server(f"world{i}", 25565 + i) for i in range(6)]
+    await app.handle(make_event("/设置", private=True))
+    first = await press(app, qq, "默认服务器")
+    assert len(first.rows) == 5
+    second = await press(app, qq, "下一页")
+    assert "默认服务器 2/2" in second.markdown
+    selected = await press(app, qq, "world4")
+    assert "默认服务器 2/2" in selected.markdown
+    assert "当前 ｜ world4" in selected.markdown
+    mc.servers.return_value = []
+    await press(app, qq, "world5")
+    assert "服务器已不存在" in sent_card(qq).markdown
+    assert "暂无服务器" in sent_card(qq).markdown
+    assert "当前 ｜ world4" in sent_card(qq).markdown
+
+
+async def test_custom_submission_replaces_the_quoted_edit_card(app, database, qq):
+    await enroll(app)
+    await app.handle(make_event("/设置 状态查询间隔", private=True))
+    assert sent_card(qq).rows[1][0].command
+    first_card = card_id(qq)
+    await app.handle(make_event("/设置 状态查询间隔", private=True))
+    second_card = card_id(qq)
+    qq.recall.assert_not_awaited()
+
+    await app.handle(
+        make_event("/设置 状态查询间隔 0", private=True, ref=f"REFIDX_{first_card}")
+    )
+    assert "请输入有效的正整数" in sent_card(qq).markdown
+    qq.recall.assert_awaited_once_with("private", "user-one", f"sent-{first_card}")
+    assert [entry[0] for entry in qq.mock_calls[-2:]] == ["send_card", "recall"]
+    correction = card_id(qq)
+
+    await app.handle(make_event("/设置 状态查询间隔 9", private=True))
+    assert qq.recall.await_count == 1
+    await app.handle(
+        make_event("/设置 重启等待上限 5", private=True, ref=f"REFIDX_{correction}")
+    )
+    assert qq.recall.await_count == 1
+    await app.handle(
+        make_event("/设置 状态查询间隔 7", private=True, ref=f"REFIDX_{second_card}")
+    )
+    qq.recall.assert_awaited_with("private", "user-one", f"sent-{second_card}")
+    assert "已更新 状态查询间隔 · 7 秒" in sent_card(qq).markdown
+    async with database.sessions() as session:
+        assert (await database.preferences(session)).restart_poll_interval_seconds == 7
+
+
+async def test_replacing_a_card_waits_for_success_and_consumes_it_once(app, qq):
+    await enroll(app)
+    await app.handle(make_event("/设置", private=True))
+    original = card_id(qq)
+    system = sent_card(qq).rows[1][1].data
+    send_card = qq.send_card.side_effect
+    qq.send_card.side_effect = QQError(500)
+    await app.handle(interaction(system, button_id=f"{original}-1-1"))
+    qq.recall.assert_not_awaited()
+
+    qq.send_card.side_effect = send_card
+    qq.recall.side_effect = QQError(400)
+    await app.handle(interaction(system, button_id=f"{original}-1-1"))
+    assert "系统设置" in sent_card(qq).markdown
+    qq.recall.assert_awaited_once_with("private", "user-one", f"sent-{original}")
+    assert [entry[0] for entry in qq.mock_calls[-2:]] == ["send_card", "recall"]
+    count = qq.send_card.await_count
+    stale = interaction(system, button_id=f"{original}-1-1")
+    await app.handle(stale)
+    qq.acknowledge.assert_awaited_with(stale["d"]["id"], code=3)
+    assert qq.send_card.await_count == count
