@@ -1,5 +1,8 @@
+from io import BytesIO
+
 import pytest
 from conftest import make_event, message
+from PIL import Image, ImageDraw
 
 from mc_admin_qqbot.domain import UserInputError
 from mc_admin_qqbot.mcadmin import McAdminResponseError, McAdminUnavailable
@@ -109,40 +112,72 @@ async def test_invalid_admin_inputs_do_not_reach_rcon_or_restart(
     assert await database.pending()
 
 
-async def test_lists_are_compact_paginated_plain_text(app, database, mc):
-    names = [f"Player{i}" for i in range(45)]
-    mc.rcon.return_value = "There are 45 players: " + ", ".join(names)
-    await app.handle(make_event("/whitelist list /creative"))
-    reply = (await database.pending())[-1].body
-    assert "第 1/3 页" in reply
-    assert "Player19" in reply
-    assert "Player20" not in reply
-    assert "下一页：/whitelist list 2 /creative" in reply
-    await app.handle(make_event("/whitelist list 3 /creative"))
-    reply = (await database.pending())[-1].body
-    assert "第 3/3 页" in reply
-    assert "Player44" in reply
-    assert "下一页" not in reply
-    mc.rcon.return_value = "There are 1 ban(s):\nSteve was banned by Server: Test"
+@pytest.mark.parametrize(
+    ("command", "private", "target", "rcon", "heading"),
+    [
+        ("/whitelist list /creative", False, "creative", "whitelist list", "白名单"),
+        ("/banlist", True, "vanilla", None, "封禁名单"),
+    ],
+)
+async def test_lists_render_all_names_in_one_png(
+    app, database, mc, monkeypatch, command, private, target, rcon, heading
+):
+    names = [f"Player{i:02}" for i in range(45, 0, -1)] + ["alpha", "Player42"]
+    if rcon is not None:
+        mc.rcon.return_value = f"There are {len(names)} players: " + ", ".join(names)
+    else:
+        mc.banned_players.return_value = names
+    drawn = []
+    draw_text = ImageDraw.ImageDraw.text
+
+    def record_text(draw, position, text, *args, **kwargs):
+        drawn.append(text)
+        draw_text(draw, position, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    if private:
+        await bind_user(database, admin=True)
+    event = make_event(command, private=private)
+    await app.handle(event)
+
+    if rcon is not None:
+        mc.rcon.assert_awaited_once_with(target, rcon)
+    else:
+        mc.banned_players.assert_awaited_once_with(target)
+        mc.rcon.assert_not_awaited()
+    (reply,) = await database.pending()
+    assert reply.destination == ("user-one" if private else "test-group")
+    assert reply.reply_msg_id == event["d"]["id"]
+    assert isinstance(reply.body, bytes)
+    with Image.open(BytesIO(reply.body)) as image:
+        assert image.format == "PNG"
+        image.verify()
+    assert heading in drawn
+    assert [text for text in drawn if text in names] == sorted(names, key=str.casefold)
+
+
+async def test_empty_list_gets_an_image_and_bad_server_data_gets_a_safe_error(
+    app, database, mc
+):
+    mc.banned_players.return_value = []
     await app.handle(make_event("/banlist"))
-    assert "封禁名单，共 1 人" in (await database.pending())[-1].body
-    mc.rcon.assert_awaited_with("vanilla", "banlist players")
-    mc.rcon.return_value = "There are no bans"
-    await app.handle(make_event("/banlist"))
-    assert "暂无" in (await database.pending())[-1].body
+    assert (await database.pending())[-1].body.startswith(b"\x89PNG\r\n\x1a\n")
     mc.rcon.return_value = "private server error details"
     await app.handle(make_event("/whitelist list"))
-    assert "无法解析" in (await database.pending())[-1].body
-    assert "private server" not in (await database.pending())[-1].body
+    assert (await database.pending())[-1].body == "服务器返回的白名单无法解析"
 
 
 @pytest.mark.parametrize(
-    ("page", "expected"), [("abc", "正整数"), ("0", "1 至"), ("3", "1 至")]
+    ("command", "usage"),
+    [("/whitelist list 2 /creative", "/whitelist list"), ("/banlist 1", "/banlist")],
 )
-async def test_bad_pages_return_usage(app, database, mc, page, expected):
-    mc.rcon.return_value = "There are 1 players: Steve"
-    await app.handle(make_event(f"/whitelist list {page}"))
-    assert expected in (await database.pending())[-1].body
+async def test_list_arguments_only_accept_the_server_selector(
+    app, database, mc, command, usage
+):
+    await app.handle(make_event(command))
+    assert (await database.pending())[-1].body == f"用法：{usage} [/<服务器>]"
+    mc.rcon.assert_not_awaited()
+    mc.banned_players.assert_not_awaited()
 
 
 async def test_say_binding_selection_current_name_and_reference_routing(

@@ -1,12 +1,15 @@
 import asyncio
+from base64 import b64decode
 from contextlib import suppress
 from datetime import timedelta
+from io import BytesIO
 from unittest.mock import patch
 
 import aiohttp
 import pytest
 from aiohttp import web
 from conftest import chat, make_event, serve
+from PIL import Image
 from sqlalchemy import select
 
 from mc_admin_qqbot.__main__ import main, run
@@ -28,6 +31,7 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
     qq_events = asyncio.Queue()
     game_events = asyncio.Queue()
     qq_posts = []
+    qq_uploads = []
     game_posts = []
     operations = []
     task_state = "running"
@@ -86,6 +90,10 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
             }
         )
 
+    async def upload_image(request):
+        qq_uploads.append(await request.json())
+        return web.json_response({"file_info": "whitelist-image"})
+
     async def handle_mc(request):
         path = request.path.removeprefix("/api")
         if request.method == "POST":
@@ -93,6 +101,9 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
             if path.endswith("/operations"):
                 operations.append(body)
                 return web.json_response({"task_id": "restart-task"}, status=202)
+            if path == "/servers/vanilla/rcon":
+                assert body == {"command": "whitelist list"}
+                return web.json_response({"output": "There are 2 players: Steve, Alex"})
             game_posts.append(body)
             return web.Response(status=204)
         if path == "/servers/":
@@ -135,6 +146,7 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
     server.router.add_get("/qq-ws", qq_socket)
     server.router.add_get("/api/events", game_socket)
     server.router.add_post("/v2/{kind}/{target}/messages", handle_qq)
+    server.router.add_post("/v2/groups/test-group/files", upload_image)
     server.router.add_route("*", "/api/{tail:.*}", handle_mc)
     async with serve(server) as url, aiohttp.ClientSession() as http:
         settings.mc_admin_base_url = url + "/api"
@@ -213,6 +225,28 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(
             async with database.sessions() as session:
                 identity = await session.get(QQIdentity, ("test-app", "user-one"))
                 assert identity.profile["member_nickname"] == "测试群名片"
+
+            list_request = make_event("/whitelist list /vanilla")
+            await qq_events.put(list_request)
+
+            async def has_picture_reply():
+                return any(body.get("msg_type") == 7 for body in qq_posts)
+
+            await eventually(has_picture_reply)
+            (upload,) = qq_uploads
+            assert upload["file_type"] == 1
+            assert upload["srv_send_msg"] is False
+            with Image.open(BytesIO(b64decode(upload["file_data"]))) as image:
+                assert image.format == "PNG"
+                image.verify()
+            assert [body for body in qq_posts if body.get("msg_type") == 7] == [
+                {
+                    "msg_type": 7,
+                    "media": {"file_info": "whitelist-image"},
+                    "msg_id": list_request["d"]["id"],
+                    "msg_seq": 1,
+                }
+            ]
         finally:
             running.cancel()
             with pytest.raises(asyncio.CancelledError):

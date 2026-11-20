@@ -123,17 +123,27 @@ returned help including the management section. Typing a slash alone did not
 open the panel in the tested Windows client. Member-side visibility was not
 tested on QQ. Command execution and help use the bot's own role check.
 
+## Player list images
+
+Whitelist and ban list replies upload a PNG as `file_type: 1` with base64
+`file_data` and `srv_send_msg: false`. The reply uses `msg_type: 7` and the
+returned `media.file_info`, with the original message ID and reply sequence.
+[QQ group media upload](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_files.post.html).
+
+The Windows QQ test group displayed the live `vanilla` whitelist and ban list
+as chat images. We checked the group files before and after both sends and
+counted three files each time.
+
 ## Test limits
 
 The rewritten client was also connected to this real bot: /list received a real
 group reply; a game-generated four-digit code was submitted in private and bound
 the same group/private user; proactive relay and a real QQ quote reached the
 isolated game API with the expected player attribution. The test database kept
-QQ number null and stored the actual username/card. The Minecraft side was a
-controlled local API fixture, not a production restart or RCON operation.
+QQ number null and stored the actual username/card. The binding and quote
+experiments used a controlled Minecraft API fixture.
 
 Actual active group sends, passive replies, plain group reception, profile
 refresh inputs and quote indexes were verified. Bulk quotas, long-term proactive
 delivery limits, cross-AppID identity linking, merged forwards and editing a
-previous message were not established by these experiments. Lists use plain-text
-pages and do not depend on those capabilities.
+previous message were not established by these experiments.

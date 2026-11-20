@@ -97,7 +97,7 @@ class OutboundDelivery(Base):
     dedupe_key: Mapped[str] = mapped_column(String, unique=True)
     channel: Mapped[Channel] = mapped_column(String)
     destination: Mapped[str] = mapped_column(String)
-    body: Mapped[str] = mapped_column(Text)
+    body: Mapped[str | bytes] = mapped_column(Text)
     server_id: Mapped[str | None] = mapped_column(String)
     reply_msg_id: Mapped[str | None] = mapped_column(Text)
     reply_seq: Mapped[int] = mapped_column(default=1)

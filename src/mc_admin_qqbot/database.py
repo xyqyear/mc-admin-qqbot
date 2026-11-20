@@ -100,7 +100,7 @@ class Database:
         key: str,
         channel: str,
         destination: str,
-        body: str,
+        body: str | bytes,
         server_id: str | None = None,
         reply_msg_id: str | None = None,
         reply_seq: int = 1,
@@ -119,14 +119,14 @@ class Database:
             .on_conflict_do_nothing(index_elements=["dedupe_key"])
         )
 
-    async def reply(self, message: QQMessage, text: str) -> None:
+    async def reply(self, message: QQMessage, body: str | bytes) -> None:
         async with self.sessions.begin() as session:
             await self.enqueue(
                 session,
                 key=f"reply:{self.app_id}:{message.id}",
                 channel=message.scope,
                 destination=message.destination,
-                body=text,
+                body=body,
                 reply_msg_id=message.id,
             )
 
@@ -204,6 +204,8 @@ class Database:
             row.status = "sent"
             row.remote_message_id = message_id
             row.last_error = None
+            if isinstance(row.body, bytes):
+                row.body = ""
             if ref_idx and delivery.server_id and delivery.channel != "game":
                 await session.execute(
                     self.route_statement(

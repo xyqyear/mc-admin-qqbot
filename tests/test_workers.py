@@ -92,7 +92,8 @@ async def test_delivery_failure_policy_and_safe_diagnostics(
     assert await database.pending() == []
 
 
-async def test_outbox_retries_after_restart_and_deduplicates(database, qq, mc):
+@pytest.mark.parametrize("body", ["hello", b"\x89PNG\r\n\x1a\nimage"])
+async def test_outbox_retries_after_restart_and_deduplicates(database, qq, mc, body):
     for _ in range(2):
         async with database.sessions.begin() as session:
             await database.enqueue(
@@ -100,7 +101,7 @@ async def test_outbox_retries_after_restart_and_deduplicates(database, qq, mc):
                 key="one",
                 channel="private",
                 destination="user-one",
-                body="hello",
+                body=body,
                 reply_msg_id="incoming",
             )
     row = (await database.pending())[0]
@@ -110,13 +111,18 @@ async def test_outbox_retries_after_restart_and_deduplicates(database, qq, mc):
     await database.initialize()
     async with database.sessions.begin() as session:
         saved = await session.get(OutboundDelivery, row.id)
+        assert saved.body == body
         saved.available_at = utc_now() - timedelta(seconds=1)
     qq.send.side_effect = None
     await deliver((await database.pending())[0], database, qq, mc)
     assert await database.pending() == []
     qq.send.assert_awaited_with(
-        "private", "user-one", "hello", msg_id="incoming", msg_seq=1
+        "private", "user-one", body, msg_id="incoming", msg_seq=1
     )
+    async with database.sessions() as session:
+        saved = await session.get(OutboundDelivery, row.id)
+        assert saved.status == "sent"
+        assert saved.body == ("" if isinstance(body, bytes) else body)
 
 
 async def make_watch(database, **overrides):

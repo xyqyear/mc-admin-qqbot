@@ -88,6 +88,15 @@ class RconResult(BaseModel):
     output: str
 
 
+class FileContent(BaseModel):
+    content: str
+
+
+class PlayerBan(BaseModel):
+    name: str = Field(min_length=1)
+    expires: str = "forever"
+
+
 class AcceptedTask(BaseModel):
     task_id: str
 
@@ -129,6 +138,7 @@ class UnknownFrame(BaseModel):
 type EventFrame = ChatEvent | HeartbeatFrame | StreamResetFrame | UnknownFrame
 metadata_adapter = TypeAdapter(list[ServerMetadata])
 players_adapter = TypeAdapter(list[PlayerDetail])
+bans_adapter = TypeAdapter(list[PlayerBan])
 ResponseModel = TypeVar("ResponseModel")
 
 
@@ -225,6 +235,29 @@ class McAdminClient:
         )
         log.info("RCON server=%s command=%s result=completed", server_id, command)
         return result.output
+
+    async def banned_players(self, server_id: str) -> list[str]:
+        server_path = f"/servers/{quote(server_id, safe='')}"
+        try:
+            response = await self.request(
+                "GET",
+                f"{server_path}/files/content?path=/banned-players.json",
+            )
+        except McAdminResponseError as exc:
+            if exc.status_code == 404 and exc.detail == {"detail": "File not found"}:
+                return []
+            raise
+        content = self.validate(response, FileContent.model_validate).content
+        now = datetime.now(UTC)
+        try:
+            return [
+                entry.name
+                for entry in bans_adapter.validate_json(content)
+                if entry.expires == "forever"
+                or datetime.strptime(entry.expires, "%Y-%m-%d %H:%M:%S %z") > now
+            ]
+        except ValueError as exc:
+            raise McAdminResponseError(200, "Invalid ban list") from exc
 
     async def send_message(
         self,

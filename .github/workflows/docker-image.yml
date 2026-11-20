@@ -19,6 +19,7 @@ jobs:
           version: "0.12.0"
           python-version: "3.13"
           enable-cache: true
+      - run: sudo apt-get update && sudo apt-get install -y fonts-wqy-zenhei fonts-dejavu-core
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check src tests
@@ -60,10 +61,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Smoke test installed image and writable database
+      - name: Smoke test rendering and writable database
         run: |
           docker run --rm --entrypoint python mc-admin-qqbot:qualified -c \
-            'import asyncio; from mc_admin_qqbot.database import Database; db = Database("sqlite+aiosqlite:///./data/smoke.db", "smoke"); asyncio.run(db.initialize()); asyncio.run(db.close())'
+            'import asyncio; from mc_admin_qqbot.database import Database; from mc_admin_qqbot.roster import render_player_list; db = Database("sqlite+aiosqlite:///./data/smoke.db", "smoke"); asyncio.run(db.initialize()); asyncio.run(db.close()); assert render_player_list("白名单", "smoke", ["Steve"]).startswith(b"\x89PNG")'
       - name: Bind qualification receipt to commit
         env:
           QUALIFIED_SHA: ${{ github.sha }}

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -139,16 +140,33 @@ class QQClient:
         self,
         scope: Scope,
         destination: str,
-        text: str,
+        content: str | bytes,
         *,
         msg_id: str | None = None,
         msg_seq: int = 1,
     ) -> SentMessage:
-        body: dict[str, Any] = {"msg_type": 0, "content": text}
+        kind = "groups" if scope == "group" else "users"
+        endpoint = f"/v2/{kind}/{destination}"
+        if isinstance(content, bytes):
+            upload = await self.request(
+                "POST",
+                f"{endpoint}/files",
+                {
+                    "file_type": 1,
+                    "file_name": "players.png",
+                    "file_data": base64.b64encode(content).decode("ascii"),
+                    "srv_send_msg": False,
+                },
+            )
+            body: dict[str, Any] = {
+                "msg_type": 7,
+                "media": {"file_info": upload["file_info"]},
+            }
+        else:
+            body = {"msg_type": 0, "content": content}
         if msg_id:
             body.update(msg_id=msg_id, msg_seq=msg_seq)
-        kind = "groups" if scope == "group" else "users"
-        data = await self.request("POST", f"/v2/{kind}/{destination}/messages", body)
+        data = await self.request("POST", f"{endpoint}/messages", body)
         return SentMessage(data["id"], data.get("ext_info", {}).get("ref_idx"))
 
     async def group_state(self, group_openid: str) -> dict[str, Any]:

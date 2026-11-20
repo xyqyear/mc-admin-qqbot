@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 import aiohttp
@@ -94,6 +95,48 @@ async def test_http_contract_server_selection_player_actions_and_task():
         {"message": "code", "color": "yellow", "target_player": "Steve"},
     ) in calls
     assert ("POST", "/servers/vanilla/operations", {"action": "restart"}) in calls
+
+
+@pytest.mark.parametrize(
+    ("status", "payload", "names"),
+    [
+        (
+            200,
+            {
+                "content": json.dumps(
+                    [
+                        {
+                            "name": "Permanent",
+                            "expires": "forever",
+                            "reason": "a reason: details",
+                        },
+                        {"name": "Expired", "expires": "2000-01-01 00:00:00 +0800"},
+                        {"name": "Active", "expires": "2999-01-01 00:00:00 +0800"},
+                    ]
+                )
+            },
+            ["Permanent", "Active"],
+        ),
+        (404, {"detail": "File not found"}, []),
+        (404, {"detail": "Server not found"}, None),
+        (200, {"content": "invalid JSON"}, None),
+    ],
+)
+async def test_reading_bans_returns_only_active_player_names(status, payload, names):
+    async def handle(request):
+        assert request.headers["Authorization"] == "Bearer master"
+        assert request.query.get("path") == "/banned-players.json"
+        return web.json_response(payload, status=status)
+
+    app = web.Application()
+    app.router.add_get("/api/servers/vanilla/files/content", handle)
+    async with serve(app) as url, aiohttp.ClientSession() as http:
+        client = McAdminClient(http, url + "/api", "master")
+        if names is None:
+            with pytest.raises(McAdminResponseError, match=f"HTTP {status}"):
+                await client.banned_players("vanilla")
+        else:
+            assert await client.banned_players("vanilla") == names
 
 
 @pytest.mark.parametrize(

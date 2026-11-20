@@ -7,6 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-wqy-zenhei fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN python -m pip install --no-cache-dir uv==0.12.0
 
 COPY pyproject.toml uv.lock README.md ./

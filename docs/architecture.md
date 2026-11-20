@@ -8,7 +8,7 @@ mc-admin event receive, delivery and restart monitoring.
 | qq.py | Tokens, HTTP messages, gateway heartbeat/resume, parsed QQ messages |
 | mcadmin.py | mc-admin HTTP/WebSocket wire models and client |
 | application.py | Startup, profile refresh, private enrollment, dispatch, lifecycle |
-| commands.py, domain.py | QQ commands, permissions, targeting, compact output |
+| commands.py, domain.py, roster.py | QQ commands, permissions, targeting, roster rendering |
 | binding.py, relay.py | Game initiation, confirmation, atomic game-event handling |
 | models.py, database.py | Profiles, outbox, routes, cursor, restart watches |
 | workers.py | Delivery retry, reconnect and restart completion |
@@ -36,6 +36,10 @@ binding. Serialize claims of the single startup token.
 
 Deduplicate QQ events in memory and reply insertions by persisted keys. Synchronous
 external QQ command mutations are not exactly once across process crashes.
+
+Roster PNGs are stored as SQLite BLOB values in the existing outbox body column.
+After a successful send, the delivery record keeps the remote ID and drops its
+image bytes.
 
 ## Protocol evidence
 

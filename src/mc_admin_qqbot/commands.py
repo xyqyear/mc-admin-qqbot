@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -13,31 +14,17 @@ from .domain import (
     format_server_list,
     parse_targeted_text,
     translate_action,
-    translate_player_list,
+    translate_whitelist,
     validate_player_name,
 )
 from .mcadmin import McAdminClient, McAdminResponseError, McAdminUnavailable
 from .models import RestartWatch, User, utc_now
 from .qq import QQMessage
+from .roster import render_player_list
 
 log = logging.getLogger(__name__)
 ALIASES = {"ping": "list", "l": "list", "s": "say"}
 COMMANDS = {"help", "list", "say", "whitelist", "ban", "unban", "banlist", "restart"}
-
-
-def format_page(title: str, names: list[str], raw: str, command: str) -> str:
-    try:
-        page = int(raw or "1")
-    except ValueError as exc:
-        raise UserInputError("页码必须是正整数") from exc
-    pages = max(1, (len(names) + 19) // 20)
-    if not 1 <= page <= pages:
-        raise UserInputError(f"页码应在 1 至 {pages} 之间")
-    text = "、".join(names[(page - 1) * 20 : page * 20]) or "暂无"
-    result = f"{title}，共 {len(names)} 人，第 {page}/{pages} 页\n{text}"
-    if page < pages:
-        result += f"\n下一页：{command.format(page=page + 1)}"
-    return result
 
 
 class Commands:
@@ -58,7 +45,7 @@ class Commands:
             require_explicit=restart,
         )
 
-    async def handle(self, message: QQMessage, user: User) -> str | None:
+    async def handle(self, message: QQMessage, user: User) -> str | bytes | None:
         if message.ref_msg_idx:
             server_id = await self.database.route_for(message)
             if server_id:
@@ -134,33 +121,34 @@ class Commands:
             "command user=%s action=say server=%s result=success", user.id, server_id
         )
 
-    async def whitelist(self, raw: str) -> str:
+    async def whitelist(self, raw: str) -> str | bytes:
         operation, _, rest = raw.strip().partition(" ")
         if operation == "list":
             return await self.player_list("whitelist", rest)
         if operation not in {"add", "remove"}:
             raise UserInputError(
-                "用法：/whitelist list [页码] 或 add/remove <玩家> [/<服务器>]"
+                "用法：/whitelist list [/<服务器>] 或 add/remove <玩家> [/<服务器>]"
             )
         target = await self.target(rest)
         player = validate_player_name(target.text)
         output = await self.mc.rcon(target.server.id, f"whitelist {operation} {player}")
         return translate_action(f"whitelist_{operation}", player, output)
 
-    async def player_list(self, kind: str, raw: str) -> str:
+    async def player_list(self, kind: str, raw: str) -> str | bytes:
         target = await self.target(raw)
-        label = "白名单" if kind == "whitelist" else "封禁名单"
-        command = "whitelist list" if kind == "whitelist" else "banlist players"
-        names = translate_player_list(
-            kind, await self.mc.rcon(target.server.id, command)
-        )
-        if names is None:
-            return f"服务器返回的{label}无法解析"
-        next_command = f"/{'whitelist list' if kind == 'whitelist' else 'banlist'}"
-        next_command += f" {{page}} /{target.server.id}"
-        return format_page(
-            f"[{target.server.id}] {label}", names, target.text, next_command
-        )
+        whitelist = kind == "whitelist"
+        label = "白名单" if whitelist else "封禁名单"
+        if target.text:
+            usage = "/whitelist list" if whitelist else "/banlist"
+            raise UserInputError(f"用法：{usage} [/<服务器>]")
+        server_id = target.server.id
+        if whitelist:
+            names = translate_whitelist(await self.mc.rcon(server_id, "whitelist list"))
+            if names is None:
+                return "服务器返回的白名单无法解析"
+        else:
+            names = await self.mc.banned_players(server_id)
+        return await asyncio.to_thread(render_player_list, label, server_id, names)
 
     async def restart(self, message: QQMessage, user: User, raw: str) -> str:
         target = await self.target(raw, restart=True)

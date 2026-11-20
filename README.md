@@ -6,7 +6,9 @@ All Minecraft operations go through mc-admin.
 
 ## Start locally
 
-Requires Python 3.13+, uv and a reachable mc-admin API.
+Requires Python 3.13+, uv and a reachable mc-admin API. Roster rendering uses
+Microsoft YaHei and Consolas on Windows. On Debian or Ubuntu, install
+`fonts-wqy-zenhei` and `fonts-dejavu-core`. The Docker image includes its fonts.
 
 ```powershell
 uv sync --frozen
@@ -39,8 +41,8 @@ message, including ordinary chat.
 | --- | --- |
 | `/list`, `/ping`, `/l` | Servers and online players |
 | `/say <text> [/<server>]`, `/s` | Chat as the bound player's current name |
-| `/whitelist list [page] [/<server>]` | Whitelist, 20 names per page |
-| `/banlist [page] [/<server>]` | Bans, 20 names per page |
+| `/whitelist list [/<server>]` | Full whitelist as one image |
+| `/banlist [/<server>]` | Full ban list as one image |
 | `/whitelist add/remove <player> [/<server>]` | Manage whitelist; admin only |
 | `/ban <player>`, `/unban <player>` | Manage bans; admin only |
 | `/restart /<server>` | Restart an explicitly selected server; admin only |
@@ -56,8 +58,7 @@ QQ's native command panel is configured separately for the group. See
 [command panel setup](docs/qq-protocol.md#group-command-panel).
 
 Minecraft messages beginning with `\\` or `、、` are relayed proactively.
-Quoting a relay sends a bound user's reply to its original server. Long lists
-use compact text pages, without merged forwards.
+Quoting a relay sends a bound user's reply to its original server.
 
 ## Configuration
 

@@ -32,8 +32,9 @@ preserves profiles and administrator rights.
 ## Commands and routing
 
 Preserve /list (/ping, /l), /say (/s), whitelist management, /ban, /unban, /banlist,
-/restart and /help. Mutations require admin access. Public lists show 20 player
-names per plain-text page with an explicit next-page command.
+/restart and /help. Mutations require admin access. Whitelist and ban list queries
+return one PNG with the server, count and every name sorted case-insensitively.
+The image shows an empty state when the server returns an empty list.
 
 Show management commands in /help only to callers authorized to run them.
 

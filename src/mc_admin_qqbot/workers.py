@@ -47,6 +47,7 @@ async def deliver(
     try:
         if row.channel == "game":
             assert row.server_id is not None
+            assert isinstance(row.body, str)
             await mc.send_message(
                 row.server_id, row.body, target_player=row.destination
             )

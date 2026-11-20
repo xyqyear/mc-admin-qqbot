@@ -9,7 +9,7 @@ from mc_admin_qqbot.domain import (
     format_server_list,
     parse_targeted_text,
     translate_action,
-    translate_player_list,
+    translate_whitelist,
     validate_player_name,
     visible_online_servers,
 )
@@ -171,45 +171,13 @@ def test_rcon_translation_never_exposes_unknown_output() -> None:
 
 
 def test_whitelist_translation() -> None:
-    assert translate_player_list("whitelist", "There are no whitelisted players") == []
-    assert translate_player_list("whitelist", "There are 2 players: Alice, Bob") == [
+    assert translate_whitelist("There are no whitelisted players") == []
+    assert translate_whitelist("There are 2 players: Alice, Bob") == [
         "Alice",
         "Bob",
     ]
-    assert translate_player_list("whitelist", "unstructured output") is None
-    assert translate_player_list("whitelist", "players: @a") is None
-    assert translate_player_list("whitelist", "players:") == []
-    assert translate_player_list("whitelist", "players: Alice,") is None
-    assert translate_player_list("unknown", "players: Alice") is None
-
-
-def test_banlist_translation() -> None:
-    assert translate_player_list("banlist", "There are no bans") == []
-    assert translate_player_list(
-        "banlist",
-        "There are 1 ban(s):\nAlice was banned by Server: Banned by an operator.",
-    ) == ["Alice"]
-    assert translate_player_list(
-        "banlist",
-        "\n".join(
-            [
-                "There are 2 ban(s):",
-                "Alice was banned by Server: Griefing, repeatedly: final warning",
-                "Bob_2 was banned by Admin: (Unknown)",
-            ]
-        ),
-    ) == ["Alice", "Bob_2"]
-
-
-@pytest.mark.parametrize(
-    "output",
-    [
-        "",
-        "unstructured output",
-        "There are 2 ban(s):\nAlice was banned by Server: reason",
-        "There are 1 ban(s):\nAlice was banned by Server",
-        "There are 1 ban(s):\n@a was banned by Server: reason",
-    ],
-)
-def test_banlist_translation_rejects_malformed_output(output: str) -> None:
-    assert translate_player_list("banlist", output) is None
+    assert translate_whitelist("unstructured output") is None
+    assert translate_whitelist("players: @a") is None
+    assert translate_whitelist("players:") == []
+    assert translate_whitelist("players: Alice,") is None
+    assert translate_whitelist("There are 2 players: Alice") is None
