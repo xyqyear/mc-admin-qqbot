@@ -111,7 +111,7 @@ docker compose --env-file .env.bot up -d
 docker compose logs bot
 ```
 
-Compose uses `ghcr.io/xyqyear/mc-admin-qqbot:0.2.0` and mounts ./data:/app/data.
+Compose uses `ghcr.io/xyqyear/mc-admin-qqbot:0.3.0` and mounts ./data:/app/data.
 The image runs as UID/GID 1000. The mc-admin address must be reachable **from
 the container**. For a local source build, tag the image `mc-admin-qqbot:local`
 and set `MC_ADMIN_QQBOT_IMAGE` to that tag when running Compose.

@@ -1,6 +1,6 @@
 [project]
 name = "mc-admin-qqbot"
-version = "0.2.0"
+version = "0.3.0"
 description = "An official QQ bot for Minecraft servers managed by mc-admin"
 readme = "README.md"
 authors = [

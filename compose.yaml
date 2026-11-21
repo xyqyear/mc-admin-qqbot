@@ -1,6 +1,6 @@
 services:
   bot:
-    image: "${MC_ADMIN_QQBOT_IMAGE:-ghcr.io/xyqyear/mc-admin-qqbot:0.2.0}"
+    image: "${MC_ADMIN_QQBOT_IMAGE:-ghcr.io/xyqyear/mc-admin-qqbot:0.3.0}"
     environment:
       TZ: "${TZ:-Asia/Shanghai}"
       MC_ADMIN_QQBOT_QQ_APP_ID: "${MC_ADMIN_QQBOT_QQ_APP_ID:?Set QQ_APP_ID}"
