@@ -155,6 +155,31 @@ class Database:
             member = await session.get(GroupMember, (self.app_id, group, openid))
             return member.member_role if member else None
 
+    async def group_sender_name(self, message: QQMessage) -> str:
+        if card := " ".join((message.author.get("member_nickname") or "").split()):
+            return card
+        async with self.sessions() as session:
+            card, username = (
+                await session.execute(
+                    select(GroupMember.member_nickname, QQIdentity.username)
+                    .join(
+                        QQIdentity,
+                        (QQIdentity.app_id == GroupMember.app_id)
+                        & (QQIdentity.openid == GroupMember.member_openid),
+                    )
+                    .where(
+                        GroupMember.app_id == self.app_id,
+                        GroupMember.group_openid == message.destination,
+                        GroupMember.member_openid == message.openid,
+                    )
+                )
+            ).one()
+        return (
+            " ".join((card or "").split())
+            or " ".join((username or "").split())
+            or "QQ用户"
+        )
+
     async def observe(self, message: QQMessage) -> User:
         async with self.sessions.begin() as session:
             identity = await session.get(QQIdentity, (self.app_id, message.openid))

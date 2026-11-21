@@ -271,6 +271,18 @@ async def test_application_end_to_end_with_real_http_websockets_and_database(dat
                     ).player_uuid == "player-uuid"
 
             await eventually(is_bound)
+            await qq_events.put(
+                make_event(
+                    "/say 群聊转发", openid="new-member", member_nickname="群备注"
+                )
+            )
+
+            async def has_group_chat():
+                return any(
+                    body["message"] == "*<群备注> 群聊转发" for body in game_posts
+                )
+
+            await eventually(has_group_chat)
             await game_events.put(chat("、、来自游戏", "2").model_dump(mode="json"))
 
             async def has_relay():

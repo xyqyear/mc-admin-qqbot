@@ -186,9 +186,6 @@ async def test_list_arguments_only_accept_the_server_selector(
 async def test_say_binding_selection_current_name_and_reference_routing(
     app, database, mc
 ):
-    await app.handle(make_event("/say hello"))
-    assert "请先" in (await database.pending())[-1].body
-    assert not mc.send_message.called
     await bind_user(database)
     event = make_event("/s hello /creative")
     await app.handle(event)
@@ -213,10 +210,45 @@ async def test_say_binding_selection_current_name_and_reference_routing(
     await database.record_route(sparse, "vanilla")
 
 
+async def test_unbound_group_chat_uses_card_then_nickname(app, database, mc):
+    event = make_event("/s 大家好 /creative", member_nickname="群内的我")
+    await app.handle(event)
+    mc.send_message.assert_awaited_with("creative", "*<群内的我> 大家好")
+
+    ref = event["d"]["message_scene"]["ext"][0].split("=", 1)[1]
+    await app.handle(
+        make_event("引用回复 /vanilla", ref=ref, member_nickname="新群名片")
+    )
+    mc.send_message.assert_awaited_with("creative", "*<新群名片> 引用回复 /vanilla")
+
+    await app.handle(make_event(group="other-group", member_nickname="另一个群的名片"))
+    await app.handle(make_event("/say 名片字段缺失", role=None))
+    mc.send_message.assert_awaited_with("vanilla", "*<新群名片> 名片字段缺失")
+
+    await app.handle(
+        make_event("/say 名片已清空", member_nickname=" ", username="我的昵称")
+    )
+    mc.send_message.assert_awaited_with("vanilla", "*<我的昵称> 名片已清空")
+
+    await app.handle(
+        make_event("/say 暂无资料", openid="new-member", username=None, role=None)
+    )
+    mc.send_message.assert_awaited_with("vanilla", "*<QQ用户> 暂无资料")
+    mc.player.assert_not_awaited()
+    assert await database.pending() == []
+
+
+async def test_private_game_chat_requires_player_binding(app, database, mc):
+    app.claim_token = "test-admin-token"
+    await app.handle(make_event(app.claim_token, private=True))
+    await app.handle(make_event("/say 你好", private=True))
+    assert "请先在游戏内" in (await database.pending())[-1].body
+    mc.send_message.assert_not_awaited()
+
+
 async def test_reference_routes_are_scoped_and_excluded_servers_stay_blocked(
     app, database, mc
 ):
-    await bind_user(database)
     async with database.sessions.begin() as session:
         await session.execute(
             database.route_statement("group", "test-group", "ref", "hidden")
@@ -226,7 +258,7 @@ async def test_reference_routes_are_scoped_and_excluded_servers_stay_blocked(
     assert not mc.send_message.called
     assert await database.route_for(message(private=True, ref="ref")) is None
     await app.handle(make_event("/say hello", ref="missing"))
-    mc.send_message.assert_awaited_with("vanilla", "*<NewName> hello")
+    mc.send_message.assert_awaited_with("vanilla", "*<测试群名片> hello")
 
 
 async def test_restart_accepted_is_not_completed_and_duplicate_is_blocked(

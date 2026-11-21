@@ -33,10 +33,27 @@ alter old schemas or run migrations. Transfer previous data manually later.
 Stop the process before copying SQLite files, or use SQLite's online backup API.
 WAL and SHM files can contain committed data. Back up before manual maintenance.
 
-users.qq_id is optional manual data; it never participates in identity matching.
-OpenID is scoped by AppID. Replacement bot accounts must not inherit identities
-from coincidentally matching OpenIDs. Names/cards can assist manual investigation
-but do not prove ownership.
+The bot resolves identities by AppID and OpenID. SQLite stores the latest QQ
+nickname in `qq_identity` and each observed group card in `group_member`.
+For occasional manual matching, look up candidates in the relevant group.
+
+```sql
+SELECT i.openid, i.username, m.member_nickname, m.last_seen_at, u.qq_id
+FROM group_member AS m
+JOIN qq_identity AS i ON i.app_id = m.app_id AND i.openid = m.member_openid
+JOIN users AS u ON u.id = i.user_id
+WHERE i.app_id = :app_id AND m.group_openid = :group_openid
+  AND i.username = :username AND m.member_nickname = :member_nickname;
+```
+
+After verifying the account, fill `users.qq_id` on the selected identity's user
+record. Use the AppID and OpenID to target the record if labels are shared.
+
+```sql
+UPDATE users
+SET qq_id = :qq_id
+WHERE id = (SELECT user_id FROM qq_identity WHERE app_id = :app_id AND openid = :openid);
+```
 
 ## Cursor and delivery
 

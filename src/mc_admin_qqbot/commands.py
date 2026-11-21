@@ -112,7 +112,7 @@ class Commands:
     ) -> None:
         if not raw.strip():
             raise UserInputError("用法：/say <消息> [/<服务器>]")
-        if user.player_uuid is None:
+        if user.player_uuid is None and message.scope == "private":
             raise UserInputError("请先在游戏内输入 \\\\bind，再私聊机器人提交验证码")
         if routed_server is None:
             target = await self.target(message, raw, chat=True)
@@ -123,8 +123,11 @@ class Commands:
             text, server_id = raw.strip(), routed_server
         if not text:
             raise UserInputError("消息不能为空")
-        player = await self.mc.player(user.player_uuid)
-        await self.mc.send_message(server_id, f"*<{player.current_name}> {text}")
+        if user.player_uuid is None:
+            name = await self.database.group_sender_name(message)
+        else:
+            name = (await self.mc.player(user.player_uuid)).current_name
+        await self.mc.send_message(server_id, f"*<{name}> {text}")
         await self.database.record_route(message, server_id)
         log.info(
             "command user=%s action=say server=%s result=success", user.id, server_id

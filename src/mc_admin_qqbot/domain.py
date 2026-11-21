@@ -148,7 +148,7 @@ def translate_whitelist(output: str) -> list[str] | None:
 
 HELP_TEXT = """可用命令
 /list（/ping、/l）查看服务器和玩家
-/say <消息> [/<服务器>]（/s）发送游戏消息，需要绑定
+/say <消息> [/<服务器>]（/s）发送游戏消息
 /whitelist list [/<服务器>] 查看完整白名单图片
 /banlist [/<服务器>] 查看完整封禁名单图片
 服务器可使用完整 ID 或前缀指定。"""

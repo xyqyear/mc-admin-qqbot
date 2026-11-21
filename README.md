@@ -51,16 +51,15 @@ Use **刷新机器人名** or `/botname refresh` to fetch it again.
 3. Send only those four digits to the bot in a QQ private chat.
 
 `\\bind get` shows the binding; `\\bind remove` removes it.
-No QQ number is requested or inferred. The nullable users.qq_id field is for
-manual maintenance only. Identity and group profiles refresh on every received
-message, including ordinary chat.
+Operators can maintain `users.qq_id` by [looking up observed profiles](docs/operations.md#database).
+Identity and group profiles refresh on every received message, including ordinary chat.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
 | `/list`, `/ping`, `/l` | Servers and online players |
-| `/say <text> [/<server>]`, `/s` | Chat as the bound player's current name |
+| `/say <text> [/<server>]`, `/s` | Send a QQ message to Minecraft |
 | `/whitelist list [/<server>]` | Full whitelist as one image |
 | `/banlist [/<server>]` | Full ban list as one image |
 | `/whitelist add/remove <player> [/<server>]` | Manage whitelist; admin only |
@@ -88,7 +87,10 @@ QQ's native command panel is configured separately for the group. See
 [command panel setup](docs/qq-protocol.md#group-command-panel).
 
 Minecraft messages beginning with `\\` or `、、` are relayed proactively.
-Quoting a relay sends a bound user's reply to its original server.
+Quoting a relay sends the reply to its original server. Group `/say` and quote
+replies use the bound player's current game name when available. Other group
+senders use their latest group card, then their QQ nickname, then `QQ用户`.
+Sending from a private chat requires a player binding.
 
 ## Configuration
 

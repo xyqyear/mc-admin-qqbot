@@ -113,7 +113,7 @@ with `scope: group`, `target_type: specific`, and the chosen group in
 | Name | Description | `only_admin` |
 | --- | --- | --- |
 | `list` | 查看在线服务器和玩家 | false |
-| `say` | 发消息到游戏，需绑定 | false |
+| `say` | 发消息到游戏 | false |
 | `whitelist` | 白名单管理（list/add/remove） | false |
 | `banlist` | 查看封禁名单 | false |
 | `help` | 查看指令用法 | false |

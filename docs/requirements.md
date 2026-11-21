@@ -26,7 +26,7 @@ consumed once on private confirmation. Reissuing replaces the player's previous
 code. Limit confirmation attempts.
 
 One user binds one UUID and vice versa. Resolve the current name through mc-admin
-when sending chat. bind get/remove/help work with either game prefix. Unbinding
+when forwarding chat for a bound player. bind get/remove/help work with either game prefix. Unbinding
 preserves profiles and administrator rights.
 
 ## Commands and routing
@@ -51,8 +51,10 @@ literal text. Restart always needs an explicit selector. Validate player names
 before forming fixed RCON commands.
 
 Relay prefixed game chat proactively. QQ quotes use the actual reference index
-to reach the original server. Require binding for explicit and quoted chat.
-Check the server's current route when handling quotes in a group.
+to reach the original server. An unbound sender can use `/say` or reply to a
+relay in the group. Use their latest card for that group, then their QQ nickname,
+then `QQ用户`. Private chat relay requires a player binding. Check the server's
+current route when handling quotes in a group.
 
 A server is visible to and relays into the same single group. The default group
 applies to servers without explicit rules. A rule can bind a server to a group
