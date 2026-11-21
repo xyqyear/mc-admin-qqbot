@@ -117,7 +117,6 @@ def chat(text: str, cursor: str = "1", **overrides: Any) -> ChatEvent:
 def server(server_id: str = "vanilla", port: int = 25565) -> ServerOverview:
     return ServerOverview(
         id=server_id,
-        name=server_id,
         gamePort=port,
         status="HEALTHY",
         online_players=[],

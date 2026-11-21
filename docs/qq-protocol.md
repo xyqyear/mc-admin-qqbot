@@ -120,6 +120,7 @@ with `scope: group`, `target_type: specific`, and the chosen group in
 | `ban` | 封禁指定玩家 | true |
 | `unban` | 解除玩家封禁 | true |
 | `restart` | 重启指定服务器 | true |
+| `管理` | 服务器启停与维护 | true |
 
 QQ returned the names without the slash and added it in the Windows client.
 The test-group owner reopened the conversation, opened the command panel from
@@ -127,6 +128,10 @@ the toolbar, and selected `/help`. QQ filled `@罗伯特 /help`, and sending it
 returned help including the management section. Typing a slash alone did not
 open the panel in the tested Windows client. Member-side visibility was not
 tested on QQ. Command execution and help use the bot's own role check.
+
+The panel API also accepted `/管理` with `only_admin: true`. The test-group
+owner saw `/管理` in the Windows QQ panel. Selecting it filled `@罗伯特 /管理`,
+which opened the management card when sent.
 
 ## Private settings cards
 
@@ -144,6 +149,12 @@ carried `d.user_openid` and `d.data.resolved.button_data`. PUT
 The bot sent the next card using the interaction's event ID after acknowledging
 it. Subpages limit the keyboard to five rows.
 [Official QQ message button protocol](https://github.com/tencent-connect/bot-docs/blob/main/docs/develop/api-v2/server-inter/message/trans/msg-btn.md).
+
+Group callbacks from the management card carried `d.group_openid`,
+`d.group_member_openid` and an outer event ID. The group interaction ACK also
+returned HTTP 200, with a `text/plain` body. Ignore the body on success.
+Posting the next card with the outer event ID and then recalling the old card
+worked in Windows QQ. The test used an isolated mc-admin fixture.
 
 ## Recall button cards
 

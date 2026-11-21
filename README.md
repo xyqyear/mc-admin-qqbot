@@ -66,6 +66,7 @@ message, including ordinary chat.
 | `/whitelist add/remove <player> [/<server>]` | Manage whitelist; admin only |
 | `/ban <player>`, `/unban <player>` | Manage bans; admin only |
 | `/restart /<server>` | Restart an explicitly selected server; admin only |
+| `/管理 [server]` | Open server controls, maintenance and online players; admin only |
 | `/help` | Help for the commands available to the caller |
 
 Selectors match exact server IDs, then prefixes in game-port order. The
@@ -75,6 +76,13 @@ access to the default use the first visible online server. Owners and
 administrators identified by the current group message can manage visible
 servers, as can persisted superusers. Private commands require superuser
 access. Player confirmation and superuser claiming are open privately.
+
+The management card also lists stopped servers and uses server IDs throughout.
+Its **启停与重启** page offers start, stop and restart to bot superusers. Stop
+and restart ask for confirmation with the current player count. **维护任务**
+shows lifecycle and restoration status. **在线玩家** lists players and can
+prefill the existing full-roster image commands. Returning or switching pages
+replaces the previous card in the same conversation.
 
 QQ's native command panel is configured separately for the group. See
 [command panel setup](docs/qq-protocol.md#group-command-panel).

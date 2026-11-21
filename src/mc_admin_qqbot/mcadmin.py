@@ -35,7 +35,6 @@ class OnlinePlayer(BaseModel):
 
 class ServerMetadata(BaseModel):
     id: str
-    name: str
     game_port: int = Field(alias="gamePort")
 
 
@@ -70,8 +69,14 @@ class StatusSample(BaseModel):
         return self.value
 
 
+class ServerMaintenance(BaseModel):
+    active: bool = False
+    kind: str | None = None
+
+
 class ServerObservation(BaseModel):
     status: StatusSample
+    maintenance: ServerMaintenance = Field(default_factory=ServerMaintenance)
 
 
 class Monitoring(BaseModel):
@@ -104,6 +109,36 @@ class AcceptedTask(BaseModel):
 class TaskState(BaseModel):
     status: Literal["pending", "running", "completed", "failed", "cancelled"]
     ended_at: datetime | None = None
+
+
+class ServerTask(TaskState):
+    task_id: str
+    task_type: str
+    created_at: datetime
+    progress: float | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.status in {"pending", "running"}
+
+
+class ServerTasks(BaseModel):
+    tasks: list[ServerTask]
+
+
+class RestorationScope(BaseModel):
+    kind: str
+
+
+class Restoration(BaseModel):
+    status: str
+    scope: RestorationScope | None = None
+    is_rollback: bool = False
+    operation_id: str | None = None
+
+
+class Restorations(BaseModel):
+    restorations: list[Restoration]
 
 
 class EventPlayer(BaseModel):
@@ -195,23 +230,13 @@ class McAdminClient:
 
         async def describe(server: ServerMetadata) -> ServerOverview:
             status = monitoring.status(server.id)
-            players = []
-            if status == "HEALTHY":
-                data = await self.request(
-                    "GET", f"/servers/{quote(server.id, safe='')}/online-players"
-                )
-                players = [
-                    OnlinePlayer(
-                        name=p.current_name, uuid=p.uuid, player_db_id=p.player_db_id
-                    )
-                    for p in self.validate(data, players_adapter.validate_python)
-                ]
             return ServerOverview(
                 id=server.id,
-                name=server.name,
                 gamePort=server.game_port,
                 status=status,
-                online_players=players,
+                online_players=await self.online_players(server.id)
+                if status == "HEALTHY"
+                else [],
             )
 
         return list(await asyncio.gather(*(describe(server) for server in metadata)))
@@ -220,6 +245,15 @@ class McAdminClient:
         return self.validate(
             await self.request("GET", "/monitoring"), Monitoring.model_validate
         )
+
+    async def online_players(self, server_id: str) -> list[OnlinePlayer]:
+        data = await self.request(
+            "GET", f"/servers/{quote(server_id, safe='')}/online-players"
+        )
+        return [
+            OnlinePlayer(name=p.current_name, uuid=p.uuid, player_db_id=p.player_db_id)
+            for p in self.validate(data, players_adapter.validate_python)
+        ]
 
     async def player(self, uuid: str) -> PlayerDetail:
         return self.validate(
@@ -278,16 +312,37 @@ class McAdminClient:
         )
 
     async def restart(self, server_id: str) -> str:
+        return await self.operate(server_id, "restart")
+
+    async def operate(self, server_id: str, action: str) -> str:
         result = self.validate(
             await self.request(
                 "POST",
                 f"/servers/{quote(server_id, safe='')}/operations",
-                {"action": "restart"},
+                {"action": action},
             ),
             AcceptedTask.model_validate,
         )
-        log.info("restart server=%s task=%s result=accepted", server_id, result.task_id)
+        log.info(
+            "%s server=%s task=%s result=accepted", action, server_id, result.task_id
+        )
         return result.task_id
+
+    async def server_tasks(self, server_id: str) -> list[ServerTask]:
+        return self.validate(
+            await self.request("GET", f"/tasks?server_id={quote(server_id, safe='')}"),
+            ServerTasks.model_validate,
+        ).tasks
+
+    async def restoration(self, server_id: str, *, active: bool) -> Restoration | None:
+        path = "/snapshots/restorations" + ("/active" if active else "")
+        response = self.validate(
+            await self.request(
+                "GET", f"{path}?server_id={quote(server_id, safe='')}&limit=1"
+            ),
+            Restorations.model_validate,
+        )
+        return next(iter(response.restorations), None)
 
     async def task(self, task_id: str) -> TaskState:
         return self.validate(

@@ -11,6 +11,7 @@ refresh.
 | application.py | Startup, profile refresh, private enrollment, dispatch, lifecycle |
 | commands.py, domain.py, roster.py | QQ commands, permissions, targeting, roster rendering |
 | private_settings.py | Private superuser settings cards and actions |
+| management.py | Server management cards, task status and confirmed lifecycle operations |
 | cards.py | Active card references and send-before-recall sequencing in QQ conversations |
 | binding.py, relay.py | Game initiation, confirmation, atomic game-event handling |
 | models.py, database.py | Profiles, group directory, settings, outbox, routes, cursor, restart watches |
@@ -25,7 +26,9 @@ There is no registration framework, plugin container or protocol SDK.
 users owns the integer ID, optional manual QQ number, unique player UUID and
 persisted superuser flag. qq_identity maps AppID + OpenID to the user and stores
 the author profile. group_member stores per-group card and role. Commands check
-the current message role rather than authorizing from cached profiles.
+the current message role. Management card navigation in a group requires the
+original caller and their latest observed group role or current superuser status.
+Lifecycle submissions require current superuser status.
 
 ## Transactions
 
@@ -54,6 +57,11 @@ returned message ID and any command prefixes. Native prefill buttons attach a
 quote. The submitted command resolves that quote in the same conversation.
 Active cards live in memory. Replacement sends the new card first and
 consumes the reference before attempting to recall the original.
+
+Management cards bind each callback to the sending conversation, caller and
+original button data. They check server routing on each callback. Lifecycle
+actions consume the callback before submitting to mc-admin so a missing task
+receipt cannot trigger a second submission from that card.
 
 ## Protocol evidence
 

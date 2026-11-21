@@ -82,6 +82,7 @@ async def test_http_contract_server_selection_player_actions_and_task():
         result = await client.overview(lambda server_id: server_id != "hidden")
         assert await client.overview(lambda _: False) == []
         assert [server.status for server in result] == ["HEALTHY", "STARTING"]
+        assert "name" not in result[0].model_dump()
         assert result[0].online_players[0].name == "Steve"
         assert (await client.player("uuid")).current_name == "Steve"
         assert await client.rcon("vanilla", "whitelist add Steve") == "Added Steve"
@@ -96,6 +97,75 @@ async def test_http_contract_server_selection_player_actions_and_task():
         {"message": "code", "color": "yellow", "target_player": "Steve"},
     ) in calls
     assert ("POST", "/servers/vanilla/operations", {"action": "restart"}) in calls
+
+
+async def test_server_management_http_contract():
+    operations = []
+    now = utc_now().isoformat()
+
+    async def operate(request):
+        assert request.match_info["server_id"] == "survival"
+        operations.append(await request.json())
+        return web.json_response({"task_id": "op-1"}, status=202)
+
+    async def tasks(request):
+        assert dict(request.query) == {"server_id": "survival"}
+        return web.json_response(
+            {
+                "total": 1,
+                "tasks": [
+                    {
+                        "task_id": "op-1",
+                        "task_type": "server_start",
+                        "server_id": "survival",
+                        "status": "completed",
+                        "created_at": now,
+                        "ended_at": now,
+                        "progress": 100,
+                    }
+                ],
+            }
+        )
+
+    async def restorations(request):
+        assert dict(request.query) == {"server_id": "survival", "limit": "1"}
+        if request.path.endswith("/active"):
+            return web.json_response({"total": 0, "restorations": []})
+        return web.json_response(
+            {
+                "total": 1,
+                "restorations": [
+                    {
+                        "id": "restore-1",
+                        "operation_id": "old-task",
+                        "status": "succeeded",
+                        "scope": {"kind": "world", "server_id": "survival"},
+                        "is_rollback": True,
+                    }
+                ],
+            }
+        )
+
+    app = web.Application()
+    app.router.add_post("/api/servers/{server_id}/operations", operate)
+    app.router.add_get("/api/tasks", tasks)
+    app.router.add_get("/api/snapshots/restorations/active", restorations)
+    app.router.add_get("/api/snapshots/restorations", restorations)
+    async with serve(app) as url, aiohttp.ClientSession() as http:
+        client = McAdminClient(http, url + "/api", "master")
+        assert await client.operate("survival", "start") == "op-1"
+        assert await client.operate("survival", "stop") == "op-1"
+        [task] = await client.server_tasks("survival")
+        assert task.task_id == "op-1"
+        assert task.ended_at is not None
+        assert not task.active
+        assert await client.restoration("survival", active=True) is None
+        recent = await client.restoration("survival", active=False)
+        assert recent is not None
+        assert recent.is_rollback
+        assert recent.scope is not None
+        assert recent.scope.kind == "world"
+    assert operations == [{"action": "start"}, {"action": "stop"}]
 
 
 @pytest.mark.parametrize(

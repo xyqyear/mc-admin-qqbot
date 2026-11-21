@@ -96,7 +96,7 @@ async def test_official_http_active_passive_replies_and_token_refresh():
 async def test_button_cards_are_recalled_in_their_original_conversation(
     scope, destination, kind, status
 ):
-    posts, deletions = [], []
+    posts, deletions, acknowledgements = [], [], []
 
     async def token(_):
         return web.json_response({"access_token": "test-token", "expires_in": 7200})
@@ -114,9 +114,14 @@ async def test_button_cards_are_recalled_in_their_original_conversation(
         deletions.append((request.path, request.query["hidetip"], len(posts)))
         return web.Response(status=204) if status == 204 else web.json_response({})
 
+    async def acknowledge(request):
+        acknowledgements.append((request.path, await request.json()))
+        return web.Response(status=200, text="OK" if scope == "group" else "")
+
     app = web.Application()
     app.router.add_post("/token", token)
     app.router.add_post("/v2/{kind}/{target}/messages", post)
+    app.router.add_put("/interactions/{id}", acknowledge)
     app.router.add_delete("/v2/{kind}/{target}/messages/{id}", recall)
     async with serve(app) as url, aiohttp.ClientSession() as http:
         client = QQClient(http, "app", "secret", api_url=url, token_url=url + "/token")
@@ -144,6 +149,7 @@ async def test_button_cards_are_recalled_in_their_original_conversation(
         assert cards.submitted(quoted) == source
         other = message("/test 7", private=scope != "private", ref="REFIDX_1")
         assert cards.submitted(other) is None
+        await client.acknowledge("interaction-id")
         await cards.send(
             scope,
             destination,
@@ -153,6 +159,7 @@ async def test_button_cards_are_recalled_in_their_original_conversation(
         )
         assert posts[-1][0] == path
         assert posts[-1][1]["event_id"] == "button-event"
+        assert acknowledgements == [("/interactions/interaction-id", {"code": 0})]
         assert deletions == [(f"{path}/ROBOT1.0_1", "true", 2)]
         assert cards.clicked(scope, destination, callback["id"]) is None
 

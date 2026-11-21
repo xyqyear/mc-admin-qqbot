@@ -12,6 +12,7 @@ from .domain import (
     HELP_TEXT,
     UserInputError,
     format_server_list,
+    is_admin,
     parse_targeted_text,
     translate_action,
     translate_whitelist,
@@ -66,10 +67,7 @@ class Commands:
         action = ALIASES.get(name[1:], name[1:])
         if action not in COMMANDS:
             return None
-        admin = user.is_superuser or (
-            message.scope == "group"
-            and message.author.get("member_role") in {"owner", "admin"}
-        )
+        admin = is_admin(message, user)
         privileged = action in {"ban", "unban", "restart"} or (
             action == "whitelist" and argument.split()[:1] in [["add"], ["remove"]]
         )

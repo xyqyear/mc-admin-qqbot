@@ -24,7 +24,6 @@ def server(
 ) -> ServerOverview:
     return ServerOverview(
         id=server_id,
-        name=server_id,
         gamePort=port,
         status=status,
         online_players=[

@@ -1,5 +1,3 @@
-import json
-import re
 from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
@@ -7,6 +5,7 @@ from typing import Literal
 import aiohttp
 
 from .binding import Bindings
+from .cards import callback_button, markdown_text, paged_buttons, render_card
 from .database import Database, GroupRoutes
 from .domain import UserInputError
 from .mcadmin import McAdminClient, ServerMetadata
@@ -14,7 +13,6 @@ from .models import BotPreferences, ServerGroupRule
 from .qq import Button, Card, QQClient, QQError
 
 CALLBACK_PREFIX = "settings:"
-PAGE_SIZE = 4
 SETTINGS_HELP = (
     "/设置 管理服务器群组、默认服务器和系统设置\n/botname refresh 刷新机器人名"
 )
@@ -42,25 +40,8 @@ OPTIONS = {
 }
 
 
-def callback_data(data: str) -> list[str]:
-    try:
-        parts = json.loads(data.removeprefix(CALLBACK_PREFIX))
-    except ValueError:
-        return []
-    if isinstance(parts, list) and all(isinstance(part, str) for part in parts):
-        return parts
-    return []
-
-
 def button(label: str, *target: str, primary: bool = False) -> Button:
-    data = CALLBACK_PREFIX + json.dumps(
-        target, ensure_ascii=False, separators=(",", ":")
-    )
-    return Button(label, data, primary)
-
-
-def markdown_text(text: str) -> str:
-    return re.sub(r"([\\\x60*_{}\[\]<>()#+!|])", r"\\\1", " ".join(text.split()))
+    return callback_button(CALLBACK_PREFIX, label, *target, primary=primary)
 
 
 def card(
@@ -70,33 +51,18 @@ def card(
     path: tuple[str, ...] = (),
     notice: str = "",
 ) -> Card:
-    breadcrumb = " › ".join(("设置", *path)) if path else ""
-    return Card(
-        "\n\n".join(
-            part for part in (breadcrumb, f"**{title}**", notice, *lines) if part
-        ),
-        rows,
+    return render_card(
+        title, rows, *lines, path=("设置", *path) if path else (), notice=notice
     )
 
 
 def page_items[T](
     items: list[T], requested: str, *target: str
 ) -> tuple[list[T], str, list[Button]]:
-    count = max(1, (len(items) + PAGE_SIZE - 1) // PAGE_SIZE)
     try:
-        page = min(max(0, int(requested)), count - 1)
+        return paged_buttons(items, requested, CALLBACK_PREFIX, *target)
     except ValueError as exc:
         raise UserInputError("此按钮已失效，请重新打开 /设置") from exc
-    navigation = []
-    if page:
-        navigation.append(button("上一页", *target, str(page - 1)))
-    if page + 1 < count:
-        navigation.append(button("下一页", *target, str(page + 1)))
-    return (
-        items[page * PAGE_SIZE : (page + 1) * PAGE_SIZE],
-        f"{page + 1}/{count}",
-        navigation,
-    )
 
 
 def group_label(routes: GroupRoutes, openid: str | None) -> str:

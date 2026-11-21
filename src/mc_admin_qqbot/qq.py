@@ -132,7 +132,12 @@ class QQClient:
             return self._token
 
     async def request(
-        self, method: str, path: str, body: dict[str, Any] | None = None
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        ignore_body: bool = False,
     ) -> dict[str, Any]:
         attempt = 0
         while True:
@@ -151,7 +156,7 @@ class QQClient:
                     if self._token == token:
                         self._expires_at = 0
                     continue
-                if response.status < 400 and not await response.read():
+                if response.status < 400 and (not await response.read() or ignore_body):
                     return {}
                 data = await response.json()
                 if response.status >= 400:
@@ -205,6 +210,7 @@ class QQClient:
             "PUT",
             f"/interactions/{quote(interaction_id, safe='')}",
             {"code": code},
+            ignore_body=True,
         )
 
     async def send_card(
@@ -257,7 +263,9 @@ class QQClient:
     async def recall(self, scope: Scope, destination: str, message_id: str) -> None:
         endpoint = conversation_path(scope, destination)
         await self.request(
-            "DELETE", f"{endpoint}/messages/{quote(message_id, safe='')}?hidetip=true"
+            "DELETE",
+            f"{endpoint}/messages/{quote(message_id, safe='')}?hidetip=true",
+            ignore_body=True,
         )
 
     async def _heartbeat(

@@ -1,9 +1,12 @@
 import re
 from dataclasses import dataclass
 
-from .mcadmin import ServerOverview
+from .mcadmin import ServerMetadata, ServerOverview
+from .models import User
+from .qq import QQMessage
 
 ONLINE_STATUSES = {"RUNNING", "STARTING", "HEALTHY"}
+ADMIN_ROLES = {"owner", "admin"}
 PLAYER_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 
@@ -25,9 +28,13 @@ def online_servers(servers: list[ServerOverview]) -> list[ServerOverview]:
     )
 
 
-def resolve_selector(
-    servers: list[ServerOverview], selector: str
-) -> ServerOverview | None:
+def is_admin(message: QQMessage, user: User) -> bool:
+    return user.is_superuser or (
+        message.scope == "group" and message.author.get("member_role") in ADMIN_ROLES
+    )
+
+
+def resolve_selector[T: ServerMetadata](servers: list[T], selector: str) -> T | None:
     for server in servers:
         if server.id == selector:
             return server
@@ -147,6 +154,7 @@ HELP_TEXT = """可用命令
 服务器可使用完整 ID 或前缀指定。"""
 
 ADMIN_HELP_TEXT = """管理指令
+/管理 [服务器] 打开服务器启停和维护卡片
 /whitelist add/remove <玩家> [/<服务器>] 管理白名单
 /ban <玩家> [/<服务器>] 封禁玩家
 /unban <玩家> [/<服务器>] 解除封禁

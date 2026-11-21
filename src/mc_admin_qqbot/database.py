@@ -150,6 +150,11 @@ class Database:
                 )
             )
 
+    async def group_member_role(self, group: str, openid: str) -> str | None:
+        async with self.sessions() as session:
+            member = await session.get(GroupMember, (self.app_id, group, openid))
+            return member.member_role if member else None
+
     async def observe(self, message: QQMessage) -> User:
         async with self.sessions.begin() as session:
             identity = await session.get(QQIdentity, (self.app_id, message.openid))
